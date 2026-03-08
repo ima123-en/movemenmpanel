@@ -60,7 +60,7 @@ end
 
 LoadSettings()
 
-local DEPTH_OFFSET = 0.09
+local DEPTH_OFFSET = 0.05
 local STEAL_DELAY = 0.5
 
 local stealInvisActive = false
