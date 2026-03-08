@@ -1,0 +1,908 @@
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+
+local LocalPlayer = Players.LocalPlayer
+local SAVE_KEY = "Movement_Settings_" .. LocalPlayer.UserId
+
+if LocalPlayer.PlayerGui:FindFirstChild("MovementPanel") then
+    LocalPlayer.PlayerGui.MovementPanel:Destroy()
+end
+
+if getgenv().MovementSystem then
+    pcall(function() getgenv().MovementSystem.Disable() end)
+end
+
+getgenv().MovementSystem = {
+    SemiInvisStealEnabled = false,
+    SpeedBoostEnabled = false,
+    NoAnimEnabled = false,
+    StealSpeed = 29.5,
+    BodyAngle = 233,
+    SpeedBoostKey = "V",
+    Connections = {}
+}
+
+local MS = getgenv().MovementSystem
+
+local function SaveSettings()
+    pcall(function()
+        if writefile then
+            local data = {
+                SemiInvisStealEnabled = MS.SemiInvisStealEnabled,
+                SpeedBoostEnabled = MS.SpeedBoostEnabled,
+                NoAnimEnabled = MS.NoAnimEnabled,
+                StealSpeed = MS.StealSpeed,
+                BodyAngle = MS.BodyAngle,
+                SpeedBoostKey = MS.SpeedBoostKey
+            }
+            writefile(SAVE_KEY .. ".json", HttpService:JSONEncode(data))
+        end
+    end)
+end
+
+local function LoadSettings()
+    pcall(function()
+        if readfile and isfile and isfile(SAVE_KEY .. ".json") then
+            local data = HttpService:JSONDecode(readfile(SAVE_KEY .. ".json"))
+            if data.SemiInvisStealEnabled ~= nil then MS.SemiInvisStealEnabled = data.SemiInvisStealEnabled end
+            if data.SpeedBoostEnabled ~= nil then MS.SpeedBoostEnabled = data.SpeedBoostEnabled end
+            if data.NoAnimEnabled ~= nil then MS.NoAnimEnabled = data.NoAnimEnabled end
+            if data.StealSpeed then MS.StealSpeed = data.StealSpeed end
+            if data.BodyAngle then MS.BodyAngle = data.BodyAngle end
+            if data.SpeedBoostKey then MS.SpeedBoostKey = data.SpeedBoostKey end
+        end
+    end)
+end
+
+LoadSettings()
+
+local DEPTH_OFFSET = 0.09
+local STEAL_DELAY = 0.5
+
+local stealInvisActive = false
+local stealClone = nil
+local stealRaizAntiga = nil
+local stealQuadril = nil
+local stealFaixaAnimacao = nil
+local stealUpdateConnection = nil
+local stealDetectionConnection = nil
+local stealHealthConnection = nil
+local lastWalkSpeed = 100
+local stealStartTime = 0
+local isWaitingForDelay = false
+local godmodeSetup = false
+
+local SpeedConnection = nil
+local NoAnimLoop = nil
+local SpeedBoostKeyHeld = false
+
+local function SetupGodmode()
+    if godmodeSetup then return end
+    
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChild("Humanoid")
+    if not hum then return end
+    
+    pcall(function()
+        hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
+    end)
+    
+    godmodeSetup = true
+end
+
+local function DisableGodmode()
+    if not godmodeSetup then return end
+    
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChild("Humanoid")
+    if not hum then return end
+    
+    pcall(function()
+        hum:SetStateEnabled(Enum.HumanoidStateType.Dead, true)
+        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Physics, true)
+    end)
+    
+    godmodeSetup = false
+end
+
+local function IsSeated()
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local hum = char:FindFirstChild("Humanoid")
+    if not hum then return false end
+    return hum.Sit == true
+end
+
+local function RemoveFolders()
+    pcall(function()
+        local playerName = LocalPlayer.Name
+        local playerFolder = workspace:FindFirstChild(playerName)
+        if not playerFolder then return end
+        
+        local doubleRig = playerFolder:FindFirstChild("DoubleRig")
+        if doubleRig then doubleRig:Destroy() end
+        
+        local constraints = playerFolder:FindFirstChild("Constraints")
+        if constraints then constraints:Destroy() end
+    end)
+end
+
+local function CleanupStealInvis()
+    stealInvisActive = false
+    isWaitingForDelay = false
+    stealStartTime = 0
+    
+    local JogadorLocal = Players.LocalPlayer
+    if not JogadorLocal then return end
+    
+    if stealFaixaAnimacao then
+        pcall(function()
+            stealFaixaAnimacao:Stop()
+            stealFaixaAnimacao:Destroy()
+        end)
+        stealFaixaAnimacao = nil
+    end
+    
+    if stealUpdateConnection then
+        pcall(function() stealUpdateConnection:Disconnect() end)
+        stealUpdateConnection = nil
+    end
+    
+    if stealHealthConnection then
+        pcall(function() stealHealthConnection:Disconnect() end)
+        stealHealthConnection = nil
+    end
+    
+    if stealRaizAntiga and stealClone and JogadorLocal.Character then
+        pcall(function()
+            local hum = JogadorLocal.Character:FindFirstChild("Humanoid")
+            
+            if not stealRaizAntiga:IsDescendantOf(game) then
+                stealClone = nil
+                stealRaizAntiga = nil
+                stealQuadril = nil
+                DisableGodmode()
+                return
+            end
+            
+            local currentCFrame = stealClone.CFrame
+            local currentVelocity = stealClone.AssemblyLinearVelocity or Vector3.zero
+            
+            local paiTemporario = Instance.new("Model")
+            paiTemporario.Parent = game
+            JogadorLocal.Character.Parent = paiTemporario
+            stealRaizAntiga.Parent = JogadorLocal.Character
+            JogadorLocal.Character.PrimaryPart = stealRaizAntiga
+            JogadorLocal.Character.Parent = game.Workspace
+            stealRaizAntiga.CanCollide = true
+            
+            for _, v in pairs(JogadorLocal.Character:GetDescendants()) do
+                if v:IsA("Weld") or v:IsA("Motor6D") then
+                    if v.Part0 == stealClone then v.Part0 = stealRaizAntiga end
+                    if v.Part1 == stealClone then v.Part1 = stealRaizAntiga end
+                end
+            end
+            
+            stealClone:Destroy()
+            stealRaizAntiga.CFrame = currentCFrame
+            stealRaizAntiga.AssemblyLinearVelocity = currentVelocity
+            stealRaizAntiga.AssemblyAngularVelocity = Vector3.zero
+            
+            paiTemporario:Destroy()
+            
+            if hum then
+                hum.HipHeight = stealQuadril or 2
+            end
+        end)
+    end
+    
+    stealClone = nil
+    stealRaizAntiga = nil
+    stealQuadril = nil
+    
+    DisableGodmode()
+    RemoveFolders()
+end
+
+local function PlayStealAnimation()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChild("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+    
+    pcall(function()
+        local anim = Instance.new("Animation")
+        anim.AnimationId = "http://www.roblox.com/asset/?id=18537363391"
+        local animator = hum:FindFirstChild("Animator") or Instance.new("Animator", hum)
+        stealFaixaAnimacao = animator:LoadAnimation(anim)
+        stealFaixaAnimacao.Priority = Enum.AnimationPriority.Action4
+        stealFaixaAnimacao:Play(0, 1, 0)
+        anim:Destroy()
+        
+        local animStoppedConn
+        animStoppedConn = stealFaixaAnimacao.Stopped:Connect(function()
+            if stealInvisActive and not IsSeated() then
+                task.defer(PlayStealAnimation)
+            end
+        end)
+        table.insert(MS.Connections, animStoppedConn)
+        
+        task.defer(function()
+            if stealFaixaAnimacao then
+                stealFaixaAnimacao.TimePosition = 0.7
+                task.delay(1, function()
+                    if stealFaixaAnimacao then
+                        pcall(function() stealFaixaAnimacao:AdjustSpeed(math.huge) end)
+                    end
+                end)
+            end
+        end)
+    end)
+end
+
+local function ActivateStealInvis()
+    if stealInvisActive then return false end
+    if IsSeated() then return false end
+    
+    local JogadorLocal = Players.LocalPlayer
+    if not JogadorLocal.Character then return false end
+    
+    local hum = JogadorLocal.Character:FindFirstChild("Humanoid")
+    local hrp = JogadorLocal.Character:FindFirstChild("HumanoidRootPart")
+    
+    if not hum or not hrp or hum.Health <= 0 then return false end
+    if hum.Sit then return false end
+    
+    RemoveFolders()
+    SetupGodmode()
+    
+    stealQuadril = hum.HipHeight
+    stealRaizAntiga = hrp
+
+    local paiTemporario = Instance.new("Model")
+    paiTemporario.Parent = game
+    JogadorLocal.Character.Parent = paiTemporario
+    stealClone = stealRaizAntiga:Clone()
+    stealClone.Parent = JogadorLocal.Character
+    stealRaizAntiga.Parent = game.Workspace.CurrentCamera
+    stealClone.CFrame = stealRaizAntiga.CFrame
+    JogadorLocal.Character.PrimaryPart = stealClone
+    JogadorLocal.Character.Parent = game.Workspace
+    
+    for _, v in pairs(JogadorLocal.Character:GetDescendants()) do
+        if v:IsA("Weld") or v:IsA("Motor6D") then
+            if v.Part0 == stealRaizAntiga then v.Part0 = stealClone end
+            if v.Part1 == stealRaizAntiga then v.Part1 = stealClone end
+        end
+    end
+    paiTemporario:Destroy()
+
+    stealInvisActive = true
+    
+    stealHealthConnection = hum.HealthChanged:Connect(function(newHealth)
+        if stealInvisActive and newHealth <= 0 then
+            hum.Health = hum.MaxHealth
+        end
+    end)
+    
+    task.delay(0.1, function()
+        if stealInvisActive then
+            PlayStealAnimation()
+        end
+    end)
+
+    stealUpdateConnection = RunService.PreSimulation:Connect(function()
+        if not stealInvisActive then return end
+        
+        if IsSeated() then
+            task.defer(CleanupStealInvis)
+            return
+        end
+        
+        local char = JogadorLocal.Character
+        if not char then return end
+        
+        local h = char:FindFirstChild("Humanoid")
+        if not h then return end
+        
+        if not stealRaizAntiga or not stealRaizAntiga.Parent then return end
+        if not stealClone or not stealClone.Parent then return end
+        
+        if h.Health <= 1 then
+            h.Health = h.MaxHealth
+        end
+        
+        local raiz = stealClone
+        if raiz then
+            local cf = raiz.CFrame - Vector3.new(0, h.HipHeight + (raiz.Size.Y / 2) - 1 + DEPTH_OFFSET, 0)
+            -- USE MS.BodyAngle instead of hardcoded 180
+            stealRaizAntiga.CFrame = cf * CFrame.Angles(math.rad(MS.BodyAngle), 0, 0)
+            stealRaizAntiga.AssemblyLinearVelocity = raiz.AssemblyLinearVelocity
+            stealRaizAntiga.AssemblyAngularVelocity = Vector3.zero
+            stealRaizAntiga.CanCollide = false
+        end
+    end)
+
+    return true
+end
+
+local function StartStealDetection()
+    if stealDetectionConnection then return end
+    
+    lastWalkSpeed = 100
+    stealStartTime = 0
+    isWaitingForDelay = false
+    
+    stealDetectionConnection = RunService.Heartbeat:Connect(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChild("Humanoid")
+        if not hum then return end
+        
+        if hum.Sit then
+            if stealInvisActive then
+                CleanupStealInvis()
+            end
+            isWaitingForDelay = false
+            stealStartTime = 0
+            lastWalkSpeed = hum.WalkSpeed
+            return
+        end
+        
+        local currentWalkSpeed = hum.WalkSpeed
+        local isStealing = currentWalkSpeed <= 25
+        local wasStealing = lastWalkSpeed <= 25
+        
+        if isStealing and not wasStealing then
+            stealStartTime = tick()
+            isWaitingForDelay = true
+        end
+        
+        if isWaitingForDelay and isStealing then
+            if tick() - stealStartTime >= STEAL_DELAY then
+                isWaitingForDelay = false
+                if not stealInvisActive and not hum.Sit then
+                    ActivateStealInvis()
+                end
+            end
+        end
+        
+        if not isStealing and wasStealing then
+            isWaitingForDelay = false
+            stealStartTime = 0
+            if stealInvisActive then
+                CleanupStealInvis()
+            end
+        end
+        
+        if not isStealing and isWaitingForDelay then
+            isWaitingForDelay = false
+            stealStartTime = 0
+        end
+        
+        lastWalkSpeed = currentWalkSpeed
+    end)
+end
+
+local function StopStealDetection()
+    if stealDetectionConnection then
+        stealDetectionConnection:Disconnect()
+        stealDetectionConnection = nil
+    end
+    
+    isWaitingForDelay = false
+    stealStartTime = 0
+    
+    if stealInvisActive then
+        CleanupStealInvis()
+    end
+    
+    lastWalkSpeed = 100
+end
+
+local function EnableSpeedBoost()
+    if SpeedConnection then return end
+
+    SpeedConnection = RunService.Heartbeat:Connect(function()
+        if not SpeedBoostKeyHeld then return end
+        
+        local char = LocalPlayer.Character
+        if not char then return end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChild("Humanoid")
+        if not root or not hum or hum.Health <= 0 then return end
+
+        local state = hum:GetState()
+        if state == Enum.HumanoidStateType.Physics or state == Enum.HumanoidStateType.Ragdoll or state == Enum.HumanoidStateType.FallingDown then
+            return
+        end
+
+        if hum.WalkSpeed > 25 then return end
+        if hum.Sit then return end
+
+        local moveDir = hum.MoveDirection
+        if moveDir.Magnitude > 0.1 then
+            local dir = moveDir.Unit
+            root.AssemblyLinearVelocity = Vector3.new(
+                dir.X * MS.StealSpeed,
+                root.AssemblyLinearVelocity.Y,
+                dir.Z * MS.StealSpeed
+            )
+        end
+    end)
+end
+
+local function DisableSpeedBoost()
+    if SpeedConnection then
+        SpeedConnection:Disconnect()
+        SpeedConnection = nil
+    end
+    SpeedBoostKeyHeld = false
+end
+
+local function EnableNoAnim()
+    if NoAnimLoop then return end
+
+    NoAnimLoop = RunService.Heartbeat:Connect(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChild("Humanoid")
+        if not hum then return end
+        local animator = hum:FindFirstChild("Animator")
+        if not animator then return end
+
+        for _, track in pairs(animator:GetPlayingAnimationTracks()) do
+            if track.IsPlaying and track ~= stealFaixaAnimacao then
+                track:AdjustSpeed(0)
+            end
+        end
+    end)
+end
+
+local function DisableNoAnim()
+    if NoAnimLoop then
+        NoAnimLoop:Disconnect()
+        NoAnimLoop = nil
+    end
+
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChild("Humanoid")
+        if hum then
+            local animator = hum:FindFirstChild("Animator")
+            if animator then
+                for _, track in pairs(animator:GetPlayingAnimationTracks()) do
+                    track:AdjustSpeed(1)
+                end
+            end
+        end
+    end
+end
+
+-- GUI
+local parent = LocalPlayer:WaitForChild("PlayerGui")
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MovementPanel"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = parent
+
+local Main = Instance.new("Frame")
+Main.Name = "Main"
+Main.Size = UDim2.new(0, 270, 0, 280)
+Main.Position = UDim2.new(0, 15, 1, -295)
+Main.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
+Main.BorderSizePixel = 0
+Main.Parent = ScreenGui
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 10)
+
+local Stroke = Instance.new("UIStroke")
+Stroke.Color = Color3.fromRGB(35, 35, 40)
+Stroke.Thickness = 1
+Stroke.Parent = Main
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -20, 0, 36)
+Title.Position = UDim2.new(0, 14, 0, 4)
+Title.BackgroundTransparency = 1
+Title.Text = "Movement"
+Title.TextColor3 = Color3.fromRGB(210, 210, 215)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 15
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = Main
+
+local Divider = Instance.new("Frame")
+Divider.Size = UDim2.new(0.9, 0, 0, 1)
+Divider.Position = UDim2.new(0.05, 0, 0, 40)
+Divider.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+Divider.BorderSizePixel = 0
+Divider.Parent = Main
+
+local function CreateToggle(name, yPos, initialState)
+    local holder = Instance.new("Frame")
+    holder.Size = UDim2.new(0.9, 0, 0, 36)
+    holder.Position = UDim2.new(0.05, 0, 0, yPos)
+    holder.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+    holder.BorderSizePixel = 0
+    holder.Parent = Main
+    Instance.new("UICorner", holder).CornerRadius = UDim.new(0, 8)
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.65, 0, 1, 0)
+    label.Position = UDim2.new(0, 12, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = name
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 12
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextColor3 = Color3.fromRGB(170, 170, 180)
+    label.Parent = holder
+
+    local toggleBg = Instance.new("Frame")
+    toggleBg.Size = UDim2.new(0, 40, 0, 20)
+    toggleBg.Position = UDim2.new(1, -52, 0.5, -10)
+    toggleBg.BorderSizePixel = 0
+    toggleBg.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+    toggleBg.Parent = holder
+    Instance.new("UICorner", toggleBg).CornerRadius = UDim.new(1, 0)
+
+    local circle = Instance.new("Frame")
+    circle.Size = UDim2.new(0, 16, 0, 16)
+    circle.Position = UDim2.new(0, 2, 0.5, -8)
+    circle.BackgroundColor3 = Color3.fromRGB(80, 80, 90)
+    circle.BorderSizePixel = 0
+    circle.Parent = toggleBg
+    Instance.new("UICorner", circle).CornerRadius = UDim.new(1, 0)
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 1, 0)
+    btn.BackgroundTransparency = 1
+    btn.Text = ""
+    btn.Parent = holder
+
+    local function updateVisual(active)
+        if active then
+            TweenService:Create(circle, TweenInfo.new(0.2), {Position = UDim2.new(0, 22, 0.5, -8), BackgroundColor3 = Color3.fromRGB(200, 200, 210)}):Play()
+            TweenService:Create(toggleBg, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(55, 55, 65)}):Play()
+            TweenService:Create(label, TweenInfo.new(0.2), {TextColor3 = Color3.fromRGB(220, 220, 230)}):Play()
+        else
+            TweenService:Create(circle, TweenInfo.new(0.2), {Position = UDim2.new(0, 2, 0.5, -8), BackgroundColor3 = Color3.fromRGB(80, 80, 90)}):Play()
+            TweenService:Create(toggleBg, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(35, 35, 40)}):Play()
+            TweenService:Create(label, TweenInfo.new(0.2), {TextColor3 = Color3.fromRGB(170, 170, 180)}):Play()
+        end
+    end
+    
+    if initialState then
+        circle.Position = UDim2.new(0, 22, 0.5, -8)
+        circle.BackgroundColor3 = Color3.fromRGB(200, 200, 210)
+        toggleBg.BackgroundColor3 = Color3.fromRGB(55, 55, 65)
+        label.TextColor3 = Color3.fromRGB(220, 220, 230)
+    end
+
+    return holder, btn, updateVisual
+end
+
+local function CreateInputWithKeybind(labelText, yPos, defaultValue, defaultKey, onValueChanged)
+    local holder = Instance.new("Frame")
+    holder.Size = UDim2.new(0.9, 0, 0, 32)
+    holder.Position = UDim2.new(0.05, 0, 0, yPos)
+    holder.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+    holder.BorderSizePixel = 0
+    holder.Parent = Main
+    Instance.new("UICorner", holder).CornerRadius = UDim.new(0, 8)
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.35, 0, 1, 0)
+    label.Position = UDim2.new(0, 12, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = labelText
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 11
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextColor3 = Color3.fromRGB(140, 140, 150)
+    label.Parent = holder
+
+    local inputBox = Instance.new("TextBox")
+    inputBox.Size = UDim2.new(0, 50, 0, 22)
+    inputBox.Position = UDim2.new(0.4, 0, 0.5, -11)
+    inputBox.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+    inputBox.BorderSizePixel = 0
+    inputBox.Text = tostring(defaultValue)
+    inputBox.TextColor3 = Color3.fromRGB(200, 200, 210)
+    inputBox.Font = Enum.Font.Gotham
+    inputBox.TextSize = 11
+    inputBox.ClearTextOnFocus = false
+    inputBox.Parent = holder
+    Instance.new("UICorner", inputBox).CornerRadius = UDim.new(0, 4)
+
+    local keyButton = Instance.new("TextButton")
+    keyButton.Size = UDim2.new(0, 45, 0, 22)
+    keyButton.Position = UDim2.new(1, -55, 0.5, -11)
+    keyButton.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+    keyButton.BorderSizePixel = 0
+    keyButton.Text = defaultKey
+    keyButton.TextColor3 = Color3.fromRGB(200, 200, 210)
+    keyButton.Font = Enum.Font.GothamBold
+    keyButton.TextSize = 10
+    keyButton.Parent = holder
+    Instance.new("UICorner", keyButton).CornerRadius = UDim.new(0, 4)
+
+    inputBox.FocusLost:Connect(function()
+        local num = tonumber(inputBox.Text)
+        if num and num > 0 then
+            onValueChanged(num)
+        else
+            inputBox.Text = tostring(defaultValue)
+        end
+    end)
+
+    return holder, inputBox, keyButton
+end
+
+local function CreateSimpleInput(labelText, yPos, defaultValue, onChanged)
+    local holder = Instance.new("Frame")
+    holder.Size = UDim2.new(0.9, 0, 0, 32)
+    holder.Position = UDim2.new(0.05, 0, 0, yPos)
+    holder.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+    holder.BorderSizePixel = 0
+    holder.Parent = Main
+    Instance.new("UICorner", holder).CornerRadius = UDim.new(0, 8)
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.5, 0, 1, 0)
+    label.Position = UDim2.new(0, 12, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = labelText
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 11
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextColor3 = Color3.fromRGB(140, 140, 150)
+    label.Parent = holder
+
+    local inputBox = Instance.new("TextBox")
+    inputBox.Size = UDim2.new(0, 60, 0, 22)
+    inputBox.Position = UDim2.new(1, -70, 0.5, -11)
+    inputBox.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+    inputBox.BorderSizePixel = 0
+    inputBox.Text = tostring(defaultValue)
+    inputBox.TextColor3 = Color3.fromRGB(200, 200, 210)
+    inputBox.Font = Enum.Font.Gotham
+    inputBox.TextSize = 11
+    inputBox.ClearTextOnFocus = false
+    inputBox.Parent = holder
+    Instance.new("UICorner", inputBox).CornerRadius = UDim.new(0, 4)
+
+    inputBox.FocusLost:Connect(function()
+        local num = tonumber(inputBox.Text)
+        if num then
+            onChanged(num)
+        else
+            inputBox.Text = tostring(defaultValue)
+        end
+    end)
+
+    return holder, inputBox
+end
+
+local semiInvisStealHolder, semiInvisStealBtn, semiInvisStealUpdate = CreateToggle("Semi Invis Steal", 50, MS.SemiInvisStealEnabled)
+local noAnimHolder, noAnimBtn, noAnimUpdate = CreateToggle("No Animation", 94, MS.NoAnimEnabled)
+
+-- Body Angle input (wie schief der Körper im Boden ist)
+local angleHolder, angleBox = CreateSimpleInput("Body Angle", 138, MS.BodyAngle, function(val)
+    MS.BodyAngle = val
+    SaveSettings()
+end)
+
+-- Speed input with keybind
+local speedHolder, speedBox, speedKeyBtn = CreateInputWithKeybind("Speed", 178, MS.StealSpeed, MS.SpeedBoostKey, function(val)
+    MS.StealSpeed = val
+    SaveSettings()
+end)
+
+-- Status bar
+local StatusBar = Instance.new("Frame")
+StatusBar.Size = UDim2.new(0.9, 0, 0, 24)
+StatusBar.Position = UDim2.new(0.05, 0, 0, 218)
+StatusBar.BackgroundColor3 = Color3.fromRGB(16, 16, 19)
+StatusBar.BorderSizePixel = 0
+StatusBar.Parent = Main
+Instance.new("UICorner", StatusBar).CornerRadius = UDim.new(0, 6)
+
+local StatusDot = Instance.new("Frame")
+StatusDot.Size = UDim2.new(0, 6, 0, 6)
+StatusDot.Position = UDim2.new(0, 8, 0.5, -3)
+StatusDot.BackgroundColor3 = Color3.fromRGB(100, 100, 110)
+StatusDot.BorderSizePixel = 0
+StatusDot.Parent = StatusBar
+Instance.new("UICorner", StatusDot).CornerRadius = UDim.new(1, 0)
+
+local StatusText = Instance.new("TextLabel")
+StatusText.Size = UDim2.new(1, -20, 1, 0)
+StatusText.Position = UDim2.new(0, 20, 0, 0)
+StatusText.BackgroundTransparency = 1
+StatusText.Text = "Idle"
+StatusText.TextColor3 = Color3.fromRGB(100, 100, 110)
+StatusText.Font = Enum.Font.Gotham
+StatusText.TextSize = 10
+StatusText.TextXAlignment = Enum.TextXAlignment.Left
+StatusText.Parent = StatusBar
+
+-- Keybind handling
+local waitingForSpeedKey = false
+
+speedKeyBtn.MouseButton1Click:Connect(function()
+    waitingForSpeedKey = true
+    speedKeyBtn.Text = "..."
+end)
+
+-- Toggle connections
+semiInvisStealBtn.MouseButton1Click:Connect(function()
+    MS.SemiInvisStealEnabled = not MS.SemiInvisStealEnabled
+    if MS.SemiInvisStealEnabled then
+        StartStealDetection()
+    else
+        StopStealDetection()
+    end
+    semiInvisStealUpdate(MS.SemiInvisStealEnabled)
+    SaveSettings()
+end)
+
+noAnimBtn.MouseButton1Click:Connect(function()
+    MS.NoAnimEnabled = not MS.NoAnimEnabled
+    if MS.NoAnimEnabled then
+        EnableNoAnim()
+    else
+        DisableNoAnim()
+    end
+    noAnimUpdate(MS.NoAnimEnabled)
+    SaveSettings()
+end)
+
+-- Input handling
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    
+    if waitingForSpeedKey and input.UserInputType == Enum.UserInputType.Keyboard then
+        waitingForSpeedKey = false
+        local keyName = input.KeyCode.Name
+        if keyName and keyName ~= "Unknown" then
+            MS.SpeedBoostKey = keyName
+            speedKeyBtn.Text = keyName
+            SaveSettings()
+        else
+            speedKeyBtn.Text = MS.SpeedBoostKey
+        end
+        return
+    end
+    
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        local keyCode = Enum.KeyCode[MS.SpeedBoostKey]
+        if keyCode and input.KeyCode == keyCode then
+            SpeedBoostKeyHeld = true
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        local keyCode = Enum.KeyCode[MS.SpeedBoostKey]
+        if keyCode and input.KeyCode == keyCode then
+            SpeedBoostKeyHeld = false
+        end
+    end
+end)
+
+-- Dragging
+local dragging, dragStart, startPos
+Main.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = i.Position
+        startPos = Main.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+-- Character handling
+LocalPlayer.CharacterAdded:Connect(function(char)
+    CleanupStealInvis()
+    lastWalkSpeed = 100
+    isWaitingForDelay = false
+    stealStartTime = 0
+    godmodeSetup = false
+    
+    local hum = char:WaitForChild("Humanoid", 10)
+    if hum then
+        hum.Seated:Connect(function(isSeated)
+            if isSeated then
+                isWaitingForDelay = false
+                stealStartTime = 0
+                if stealInvisActive then
+                    CleanupStealInvis()
+                end
+            end
+        end)
+    end
+end)
+
+if LocalPlayer.Character then
+    local hum = LocalPlayer.Character:FindFirstChild("Humanoid")
+    if hum then
+        hum.Seated:Connect(function(isSeated)
+            if isSeated then
+                isWaitingForDelay = false
+                stealStartTime = 0
+                if stealInvisActive then
+                    CleanupStealInvis()
+                end
+            end
+        end)
+    end
+end
+
+-- Status update loop
+task.spawn(function()
+    while ScreenGui and ScreenGui.Parent do
+        if stealInvisActive then
+            StatusText.Text = "Semi Invis (" .. MS.BodyAngle .. "°)"
+            StatusDot.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+        elseif SpeedBoostKeyHeld then
+            StatusText.Text = "Speed Boost"
+            StatusDot.BackgroundColor3 = Color3.fromRGB(200, 200, 100)
+        elseif isWaitingForDelay then
+            StatusText.Text = "Waiting..."
+            StatusDot.BackgroundColor3 = Color3.fromRGB(200, 150, 100)
+        else
+            StatusText.Text = "Idle"
+            StatusDot.BackgroundColor3 = Color3.fromRGB(100, 100, 110)
+        end
+        task.wait(1/30)
+    end
+end)
+
+-- Initialize from saved settings
+if MS.SemiInvisStealEnabled then
+    StartStealDetection()
+end
+
+if MS.NoAnimEnabled then
+    EnableNoAnim()
+end
+
+EnableSpeedBoost()
+
+function MS.Disable()
+    StopStealDetection()
+    DisableSpeedBoost()
+    DisableNoAnim()
+    SaveSettings()
+    for _, conn in pairs(MS.Connections) do
+        if conn then pcall(function() conn:Disconnect() end) end
+    end
+    if ScreenGui then
+        ScreenGui:Destroy()
+    end
+end
