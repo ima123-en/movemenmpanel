@@ -5,6 +5,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
+local Workspace = game:GetService("Workspace")
 
 local LocalPlayer = Players.LocalPlayer
 local SAVE_KEY = "Movement_Settings_" .. LocalPlayer.UserId
@@ -23,6 +24,7 @@ getgenv().MovementSystem = {
     NoAnimEnabled = false,
     StealSpeed = 29.5,
     BodyAngle = 233,
+    DepthOffset = 3.7,
     SpeedBoostKey = "V",
     Connections = {}
 }
@@ -38,6 +40,7 @@ local function SaveSettings()
                 NoAnimEnabled = MS.NoAnimEnabled,
                 StealSpeed = MS.StealSpeed,
                 BodyAngle = MS.BodyAngle,
+                DepthOffset = MS.DepthOffset,
                 SpeedBoostKey = MS.SpeedBoostKey
             }))
         end
@@ -53,6 +56,7 @@ local function LoadSettings()
             if data.NoAnimEnabled ~= nil then MS.NoAnimEnabled = data.NoAnimEnabled end
             if data.StealSpeed then MS.StealSpeed = data.StealSpeed end
             if data.BodyAngle then MS.BodyAngle = data.BodyAngle end
+            if data.DepthOffset then MS.DepthOffset = data.DepthOffset end
             if data.SpeedBoostKey then MS.SpeedBoostKey = data.SpeedBoostKey end
         end
     end)
@@ -60,7 +64,6 @@ end
 
 LoadSettings()
 
-local DEPTH_OFFSET = 0.05
 local STEAL_DELAY = 0.5
 
 local stealInvisActive = false
@@ -215,7 +218,9 @@ local function PlayStealAnimation()
         
         local animStoppedConn
         animStoppedConn = stealFaixaAnimacao.Stopped:Connect(function()
-            if stealInvisActive and not IsSeated() then task.defer(PlayStealAnimation) end
+            if stealInvisActive and not IsSeated() then
+                task.defer(PlayStealAnimation)
+            end
         end)
         table.insert(MS.Connections, animStoppedConn)
         
@@ -223,7 +228,9 @@ local function PlayStealAnimation()
             if stealFaixaAnimacao then
                 stealFaixaAnimacao.TimePosition = 0.7
                 task.delay(1, function()
-                    if stealFaixaAnimacao then pcall(function() stealFaixaAnimacao:AdjustSpeed(math.huge) end) end
+                    if stealFaixaAnimacao then
+                        pcall(function() stealFaixaAnimacao:AdjustSpeed(math.huge) end)
+                    end
                 end)
             end
         end)
@@ -288,8 +295,12 @@ local function ActivateStealInvis()
         
         local raiz = stealClone
         if raiz then
-            local cf = raiz.CFrame - Vector3.new(0, h.HipHeight + (raiz.Size.Y / 2) - 1 + DEPTH_OFFSET, 0)
-            stealRaizAntiga.CFrame = cf * CFrame.Angles(math.rad(MS.BodyAngle), 0, 0)
+            local rotAngle = MS.BodyAngle or 233
+            local sinkValue = MS.DepthOffset or 3.7
+            local sa = sinkValue * 0.5
+
+            local cf = raiz.CFrame - Vector3.new(0, sa, 0)
+            stealRaizAntiga.CFrame = cf * CFrame.Angles(math.rad(rotAngle), 0, 0)
             stealRaizAntiga.AssemblyLinearVelocity = raiz.AssemblyLinearVelocity
             stealRaizAntiga.AssemblyAngularVelocity = Vector3.zero
             stealRaizAntiga.CanCollide = false
@@ -434,8 +445,8 @@ ScreenGui.Parent = parent
 
 local Main = Instance.new("Frame")
 Main.Name = "Main"
-Main.Size = UDim2.new(0, 340, 0, 340)
-Main.Position = UDim2.new(0, 15, 1, -355)
+Main.Size = UDim2.new(0, 340, 0, 380)
+Main.Position = UDim2.new(0, 15, 1, -395)
 Main.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
 Main.BorderSizePixel = 0
 Main.Parent = ScreenGui
@@ -445,6 +456,12 @@ local Stroke = Instance.new("UIStroke")
 Stroke.Color = Color3.fromRGB(35, 35, 40)
 Stroke.Thickness = 1
 Stroke.Parent = Main
+
+local DragBar = Instance.new("Frame")
+DragBar.Size = UDim2.new(1, 0, 0, 40)
+DragBar.Position = UDim2.new(0, 0, 0, 0)
+DragBar.BackgroundTransparency = 1
+DragBar.Parent = Main
 
 local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -20, 0, 36)
@@ -464,7 +481,7 @@ Divider.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
 Divider.BorderSizePixel = 0
 Divider.Parent = Main
 
-local function CreateToggle(name, yPos, initialState, cb)
+local function CreateToggle(name, yPos, getState, onToggle)
     local h = Instance.new("Frame")
     h.Size = UDim2.new(0.9, 0, 0, 42)
     h.Position = UDim2.new(0.05, 0, 0, yPos)
@@ -487,6 +504,7 @@ local function CreateToggle(name, yPos, initialState, cb)
     local bg = Instance.new("Frame")
     bg.Size = UDim2.new(0, 46, 0, 24)
     bg.Position = UDim2.new(1, -58, 0.5, -12)
+    bg.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
     bg.BorderSizePixel = 0
     bg.Parent = h
     Instance.new("UICorner", bg).CornerRadius = UDim.new(1, 0)
@@ -494,6 +512,7 @@ local function CreateToggle(name, yPos, initialState, cb)
     local c = Instance.new("Frame")
     c.Size = UDim2.new(0, 20, 0, 20)
     c.Position = UDim2.new(0, 2, 0.5, -10)
+    c.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
     c.BorderSizePixel = 0
     c.Parent = bg
     Instance.new("UICorner", c).CornerRadius = UDim.new(1, 0)
@@ -518,12 +537,16 @@ local function CreateToggle(name, yPos, initialState, cb)
         end
     end
     
-    if initialState ~= nil then upd(initialState, true) end
-    b.MouseButton1Click:Connect(function() cb() end)
+    upd(getState(), true)
+    b.MouseButton1Click:Connect(function()
+        local newState = not getState()
+        onToggle(newState)
+        upd(newState, false)
+    end)
     return upd
 end
 
-local function CreateToggleWithKeybind(name, yPos, initialState, defaultKey, onToggle, onKeyBindFocus)
+local function CreateToggleWithKeybind(name, yPos, getState, defaultKey, onToggle, onKeyBindFocus)
     local h = Instance.new("Frame", Main)
     h.Size = UDim2.new(0.9, 0, 0, 42)
     h.Position = UDim2.new(0.05, 0, 0, yPos)
@@ -582,14 +605,18 @@ local function CreateToggleWithKeybind(name, yPos, initialState, defaultKey, onT
         end
     end
 
-    upd(initialState, true)
-    b.MouseButton1Click:Connect(function() onToggle() end)
+    upd(getState(), true)
+    b.MouseButton1Click:Connect(function()
+        local newState = not getState()
+        onToggle(newState)
+        upd(newState, false)
+    end)
     kb.MouseButton1Click:Connect(function() onKeyBindFocus(kb) end)
 
     return upd, kb
 end
 
-local function CreateSimpleInput(labelText, yPos, defaultValue, onChanged)
+local function CreateSlider(labelText, yPos, minVal, maxVal, initialValue, onChanged)
     local h = Instance.new("Frame", Main)
     h.Size = UDim2.new(0.9, 0, 0, 42)
     h.Position = UDim2.new(0.05, 0, 0, yPos)
@@ -597,49 +624,147 @@ local function CreateSimpleInput(labelText, yPos, defaultValue, onChanged)
     Instance.new("UICorner", h).CornerRadius = UDim.new(0, 8)
 
     local l = Instance.new("TextLabel", h)
-    l.Size = UDim2.new(0.5, 0, 1, 0)
+    l.Size = UDim2.new(0.4, 0, 1, 0)
     l.Position = UDim2.new(0, 12, 0, 0)
     l.BackgroundTransparency = 1
     l.Text = labelText
     l.Font = Enum.Font.Gotham
     l.TextSize = 14
     l.TextXAlignment = Enum.TextXAlignment.Left
-    l.TextColor3 = Color3.fromRGB(140, 140, 150)
+    l.TextColor3 = Color3.fromRGB(170, 170, 180)
 
-    local inputBox = Instance.new("TextBox", h)
-    inputBox.Size = UDim2.new(0, 60, 0, 26)
-    inputBox.Position = UDim2.new(1, -72, 0.5, -13)
-    inputBox.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-    inputBox.BorderSizePixel = 0
-    inputBox.Text = tostring(defaultValue)
-    inputBox.TextColor3 = Color3.fromRGB(200, 200, 210)
-    inputBox.Font = Enum.Font.Gotham
-    inputBox.TextSize = 13
-    inputBox.ClearTextOnFocus = false
-    Instance.new("UICorner", inputBox).CornerRadius = UDim.new(0, 4)
+    local bar = Instance.new("Frame", h)
+    bar.Size = UDim2.new(0, 120, 0, 6)
+    bar.Position = UDim2.new(0, 120, 0.5, -3)
+    bar.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+    bar.BorderSizePixel = 0
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
 
-    inputBox.FocusLost:Connect(function()
-        local num = tonumber(inputBox.Text)
-        if num then onChanged(num) else inputBox.Text = tostring(defaultValue) end
+    local fill = Instance.new("Frame", bar)
+    fill.Size = UDim2.new(0, 0, 1, 0)
+    fill.Position = UDim2.new(0, 0, 0, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(200, 200, 210)
+    fill.BorderSizePixel = 0
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+    local knob = Instance.new("Frame", bar)
+    knob.Size = UDim2.new(0, 12, 0, 12)
+    knob.Position = UDim2.new(0, -6, 0.5, -6)
+    knob.BackgroundColor3 = Color3.fromRGB(230, 230, 235)
+    knob.BorderSizePixel = 0
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+
+    local valueLabelBG = Instance.new("Frame", h)
+    valueLabelBG.Size = UDim2.new(0, 50, 0, 20)
+    valueLabelBG.Position = UDim2.new(1, -58, 0.5, -10)
+    valueLabelBG.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+    valueLabelBG.BorderSizePixel = 0
+    Instance.new("UICorner", valueLabelBG).CornerRadius = UDim.new(0, 4)
+
+    local valueLabel = Instance.new("TextLabel", valueLabelBG)
+    valueLabel.Size = UDim2.new(1, 0, 1, 0)
+    valueLabel.Position = UDim2.new(0, 0, 0, 0)
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.Text = tostring(initialValue)
+    valueLabel.Font = Enum.Font.GothamBold
+    valueLabel.TextSize = 13
+    valueLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
+    valueLabel.TextXAlignment = Enum.TextXAlignment.Center
+
+    local dragging = false
+    local currentValue = math.clamp(initialValue, minVal, maxVal)
+
+    local function setFromAlpha(a, instant)
+        a = math.clamp(a, 0, 1)
+        local value = minVal + (maxVal - minVal) * a
+        value = math.floor(value * 10 + 0.5) / 10
+        currentValue = value
+        valueLabel.Text = tostring(value)
+
+        local sizeX = bar.AbsoluteSize.X
+        if sizeX <= 0 then return end
+        local x = a * sizeX
+
+        if instant then
+            fill.Size = UDim2.new(0, x, 1, 0)
+            knob.Position = UDim2.new(0, x - 6, 0.5, -6)
+        else
+            TweenService:Create(fill, TweenInfo.new(0.1), {Size = UDim2.new(0, x, 1, 0)}):Play()
+            TweenService:Create(knob, TweenInfo.new(0.1), {Position = UDim2.new(0, x - 6, 0.5, -6)}):Play()
+        end
+
+        onChanged(value)
+    end
+
+    local function updateFromX(px)
+        local absPos = bar.AbsolutePosition.X
+        local sizeX = bar.AbsoluteSize.X
+        if sizeX <= 0 then return end
+        local alpha = (px - absPos) / sizeX
+        setFromAlpha(alpha, false)
+    end
+
+    bar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            updateFromX(input.Position.X)
+        end
     end)
-    return h, inputBox
+
+    knob.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            updateFromX(input.Position.X)
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+
+    task.defer(function()
+        local alpha = (currentValue - minVal) / (maxVal - minVal)
+        setFromAlpha(alpha, true)
+    end)
+
+    local function setValueExternal(v)
+        currentValue = math.clamp(v, minVal, maxVal)
+        local alpha = (currentValue - minVal) / (maxVal - minVal)
+        task.defer(function()
+            setFromAlpha(alpha, true)
+        end)
+    end
+
+    return setValueExternal
 end
 
-local semiInvisUpdate = CreateToggle("Semi Invis Steal", 55, MS.SemiInvisStealEnabled, function()
-    MS.SemiInvisStealEnabled = not MS.SemiInvisStealEnabled
-    if MS.SemiInvisStealEnabled then StartStealDetection() else StopStealDetection() end
+local yPos = 55
+
+local semiInvisUpdate = CreateToggle("Semi Invis on Steal", yPos, function() return MS.SemiInvisStealEnabled end, function(state)
+    MS.SemiInvisStealEnabled = state
+    if state then StartStealDetection() else StopStealDetection() end
     SaveSettings()
 end)
 
-local noAnimUpdate = CreateToggle("No Animation", 102, MS.NoAnimEnabled, function()
-    MS.NoAnimEnabled = not MS.NoAnimEnabled
-    if MS.NoAnimEnabled then EnableNoAnim() else DisableNoAnim() end
+yPos = yPos + 47
+local noAnimUpdate = CreateToggle("No Animation", yPos, function() return MS.NoAnimEnabled end, function(state)
+    MS.NoAnimEnabled = state
+    if state then EnableNoAnim() else DisableNoAnim() end
     SaveSettings()
 end)
 
-local speedBoostUpdate, speedKeyBtn = CreateToggleWithKeybind("Speed Boost", 149, MS.SpeedBoostEnabled, MS.SpeedBoostKey, 
-    function()
-        MS.SpeedBoostEnabled = not MS.SpeedBoostEnabled
+yPos = yPos + 47
+local speedBoostUpdate, speedKeyBtn = CreateToggleWithKeybind("Speed Boost on Steal", yPos, function() return MS.SpeedBoostEnabled end, MS.SpeedBoostKey,
+    function(state)
+        MS.SpeedBoostEnabled = state
+        if state then EnableSpeedBoost() else DisableSpeedBoost() end
         SaveSettings()
     end,
     function(btn)
@@ -648,19 +773,27 @@ local speedBoostUpdate, speedKeyBtn = CreateToggleWithKeybind("Speed Boost", 149
     end
 )
 
-local speedHolder, speedBox = CreateSimpleInput("Speed Value", 196, MS.StealSpeed, function(val)
+yPos = yPos + 47
+local speedSlider = CreateSlider("Speed Value", yPos, 16, 40, MS.StealSpeed, function(val)
     MS.StealSpeed = val
     SaveSettings()
 end)
 
-local angleHolder, angleBox = CreateSimpleInput("Body Angle", 243, MS.BodyAngle, function(val)
+yPos = yPos + 47
+local angleSlider = CreateSlider("Body Angle", yPos, 180, 360, MS.BodyAngle or 233, function(val)
     MS.BodyAngle = val
+    SaveSettings()
+end)
+
+yPos = yPos + 47
+local depthSlider = CreateSlider("Depth", yPos, 0.5, 10, MS.DepthOffset or 3.7, function(val)
+    MS.DepthOffset = val
     SaveSettings()
 end)
 
 local StatusBar = Instance.new("Frame")
 StatusBar.Size = UDim2.new(0.9, 0, 0, 28)
-StatusBar.Position = UDim2.new(0.05, 0, 0, 295)
+StatusBar.Position = UDim2.new(0.05, 0, 0, 337)
 StatusBar.BackgroundColor3 = Color3.fromRGB(16, 16, 19)
 StatusBar.BorderSizePixel = 0
 StatusBar.Parent = Main
@@ -704,17 +837,25 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     if input.UserInputType == Enum.UserInputType.Keyboard then
         local keyCode = Enum.KeyCode[MS.SpeedBoostKey]
         if keyCode and input.KeyCode == keyCode then
-            MS.SpeedBoostEnabled = not MS.SpeedBoostEnabled
-            speedBoostUpdate(MS.SpeedBoostEnabled, false)
+            local newState = not MS.SpeedBoostEnabled
+            MS.SpeedBoostEnabled = newState
+            if newState then
+                EnableSpeedBoost()
+            else
+                DisableSpeedBoost()
+            end
+            speedBoostUpdate(newState, false)
             SaveSettings()
         end
     end
 end)
 
 local dragging, dragStart, startPos
-Main.InputBegan:Connect(function(i)
+DragBar.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-        dragging = true dragStart = i.Position startPos = Main.Position
+        dragging = true
+        dragStart = i.Position
+        startPos = Main.Position
     end
 end)
 UserInputService.InputChanged:Connect(function(input)
@@ -762,18 +903,17 @@ end
 
 task.spawn(function()
     while ScreenGui and ScreenGui.Parent do
-        semiInvisUpdate(MS.SemiInvisStealEnabled, true)
-        noAnimUpdate(MS.NoAnimEnabled, true)
-        speedBoostUpdate(MS.SpeedBoostEnabled, true)
-        
         if stealInvisActive then
-            StatusText.Text = "Semi Invis (" .. MS.BodyAngle .. "°)"
+            StatusText.Text = string.format("Semi Invis on Steal (%.1f° / depth %.1f)", MS.BodyAngle or 233, MS.DepthOffset or 3.7)
             StatusDot.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
         elseif MS.SpeedBoostEnabled then
-            StatusText.Text = "Speed Boost: " .. MS.StealSpeed
+            StatusText.Text = "Speed Boost on Steal: " .. tostring(MS.StealSpeed)
             StatusDot.BackgroundColor3 = Color3.fromRGB(200, 200, 100)
         elseif isWaitingForDelay then
             StatusText.Text = "Waiting..."
+            StatusDot.BackgroundColor3 = Color3.fromRGB(200, 150, 100)
+        elseif MS.NoAnimEnabled then
+            StatusText.Text = "No Animations"
             StatusDot.BackgroundColor3 = Color3.fromRGB(200, 150, 100)
         else
             StatusText.Text = "Idle"
@@ -785,12 +925,13 @@ end)
 
 if MS.SemiInvisStealEnabled then StartStealDetection() end
 if MS.NoAnimEnabled then EnableNoAnim() end
-EnableSpeedBoost()
+if MS.SpeedBoostEnabled then EnableSpeedBoost() end
 
 function MS.Disable()
     StopStealDetection()
     DisableSpeedBoost()
     DisableNoAnim()
+    CleanupStealInvis()
     SaveSettings()
     for _, conn in pairs(MS.Connections) do
         if conn then pcall(function() conn:Disconnect() end) end
