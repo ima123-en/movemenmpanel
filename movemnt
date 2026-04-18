@@ -19,12 +19,14 @@ if getgenv().MovementSystem then
 end
 
 getgenv().MovementSystem = {
+    SemiInvisEnabled = false,
     SemiInvisStealEnabled = false,
     SpeedBoostEnabled = false,
     NoAnimEnabled = false,
     StealSpeed = 29.5,
     BodyAngle = 233,
-    DepthOffset = 3.7,
+    DepthOffset = 4.4,
+    SemiInvisKey = "B",
     SpeedBoostKey = "V",
     Connections = {}
 }
@@ -35,12 +37,14 @@ local function SaveSettings()
     pcall(function()
         if writefile then
             writefile(SAVE_KEY .. ".json", HttpService:JSONEncode({
+                SemiInvisEnabled = MS.SemiInvisEnabled,
                 SemiInvisStealEnabled = MS.SemiInvisStealEnabled,
                 SpeedBoostEnabled = MS.SpeedBoostEnabled,
                 NoAnimEnabled = MS.NoAnimEnabled,
                 StealSpeed = MS.StealSpeed,
                 BodyAngle = MS.BodyAngle,
                 DepthOffset = MS.DepthOffset,
+                SemiInvisKey = MS.SemiInvisKey,
                 SpeedBoostKey = MS.SpeedBoostKey
             }))
         end
@@ -51,12 +55,14 @@ local function LoadSettings()
     pcall(function()
         if readfile and isfile and isfile(SAVE_KEY .. ".json") then
             local data = HttpService:JSONDecode(readfile(SAVE_KEY .. ".json"))
+            if data.SemiInvisEnabled ~= nil then MS.SemiInvisEnabled = data.SemiInvisEnabled end
             if data.SemiInvisStealEnabled ~= nil then MS.SemiInvisStealEnabled = data.SemiInvisStealEnabled end
             if data.SpeedBoostEnabled ~= nil then MS.SpeedBoostEnabled = data.SpeedBoostEnabled end
             if data.NoAnimEnabled ~= nil then MS.NoAnimEnabled = data.NoAnimEnabled end
             if data.StealSpeed then MS.StealSpeed = data.StealSpeed end
             if data.BodyAngle then MS.BodyAngle = data.BodyAngle end
             if data.DepthOffset then MS.DepthOffset = data.DepthOffset end
+            if data.SemiInvisKey then MS.SemiInvisKey = data.SemiInvisKey end
             if data.SpeedBoostKey then MS.SpeedBoostKey = data.SpeedBoostKey end
         end
     end)
@@ -64,7 +70,7 @@ end
 
 LoadSettings()
 
-local STEAL_DELAY = 0.5
+local STEAL_DELAY = 0.95
 
 local stealInvisActive = false
 local stealClone = nil
@@ -82,6 +88,9 @@ local godmodeSetup = false
 local SpeedConnection = nil
 local NoAnimLoop = nil
 local waitingForSpeedKey = false
+local waitingForSemiInvisKey = false
+local SemiInvisMainUpdate = nil
+local semiInvisKeyBtn = nil
 
 local function SetupGodmode()
     if godmodeSetup then return end
@@ -310,6 +319,30 @@ local function ActivateStealInvis()
     return true
 end
 
+local function EnableSemiInvis()
+    if not stealInvisActive then
+        local ok = ActivateStealInvis()
+        MS.SemiInvisEnabled = ok
+    else
+        MS.SemiInvisEnabled = true
+    end
+    if SemiInvisMainUpdate then
+        SemiInvisMainUpdate(MS.SemiInvisEnabled, false)
+    end
+    SaveSettings()
+end
+
+local function DisableSemiInvis(updateToggle)
+    if stealInvisActive or isWaitingForDelay then
+        CleanupStealInvis()
+    end
+    MS.SemiInvisEnabled = false
+    if updateToggle and SemiInvisMainUpdate then
+        SemiInvisMainUpdate(false, false)
+    end
+    SaveSettings()
+end
+
 local function StartStealDetection()
     if stealDetectionConnection then return end
     lastWalkSpeed = 100
@@ -323,9 +356,9 @@ local function StartStealDetection()
         if not hum then return end
         
         if hum.Sit then
-            if stealInvisActive then CleanupStealInvis() end
             isWaitingForDelay = false
             stealStartTime = 0
+            DisableSemiInvis(true)
             lastWalkSpeed = hum.WalkSpeed
             return
         end
@@ -342,14 +375,16 @@ local function StartStealDetection()
         if isWaitingForDelay and isStealing then
             if tick() - stealStartTime >= STEAL_DELAY then
                 isWaitingForDelay = false
-                if not stealInvisActive and not hum.Sit then ActivateStealInvis() end
+                if not hum.Sit then
+                    EnableSemiInvis()
+                end
             end
         end
         
         if not isStealing and wasStealing then
             isWaitingForDelay = false
             stealStartTime = 0
-            if stealInvisActive then CleanupStealInvis() end
+            DisableSemiInvis(true)
         end
         
         if not isStealing and isWaitingForDelay then
@@ -368,7 +403,6 @@ local function StopStealDetection()
     end
     isWaitingForDelay = false
     stealStartTime = 0
-    if stealInvisActive then CleanupStealInvis() end
     lastWalkSpeed = 100
 end
 
@@ -445,8 +479,8 @@ ScreenGui.Parent = parent
 
 local Main = Instance.new("Frame")
 Main.Name = "Main"
-Main.Size = UDim2.new(0, 340, 0, 380)
-Main.Position = UDim2.new(0, 15, 1, -395)
+Main.Size = UDim2.new(0, 340, 0, 420)
+Main.Position = UDim2.new(0, 15, 1, -435)
 Main.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
 Main.BorderSizePixel = 0
 Main.Parent = ScreenGui
@@ -537,6 +571,74 @@ local function CreateToggle(name, yPos, getState, onToggle)
         end
     end
     
+    upd(getState(), true)
+    b.MouseButton1Click:Connect(function()
+        local newState = not getState()
+        onToggle(newState)
+        upd(newState, false)
+    end)
+    return upd
+end
+
+local function CreateSmallToggle(name, yPos, getState, onToggle)
+    local h = Instance.new("Frame")
+    h.Size = UDim2.new(0.9, 0, 0, 32)
+    h.Position = UDim2.new(0.05, 0, 0, yPos)
+    h.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+    h.BorderSizePixel = 0
+    h.Parent = Main
+    Instance.new("UICorner", h).CornerRadius = UDim.new(0, 6)
+
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(0.65, 0, 1, 0)
+    l.Position = UDim2.new(0, 10, 0, 0)
+    l.BackgroundTransparency = 1
+    l.Text = name
+    l.Font = Enum.Font.Gotham
+    l.TextSize = 12
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.TextColor3 = Color3.fromRGB(160, 160, 175)
+    l.Parent = h
+
+    local bg = Instance.new("Frame")
+    bg.Size = UDim2.new(0, 40, 0, 20)
+    bg.Position = UDim2.new(1, -50, 0.5, -10)
+    bg.BackgroundColor3 = Color3.fromRGB(32, 32, 38)
+    bg.BorderSizePixel = 0
+    bg.Parent = h
+    Instance.new("UICorner", bg).CornerRadius = UDim.new(1, 0)
+
+    local c = Instance.new("Frame")
+    c.Size = UDim2.new(0, 16, 0, 16)
+    c.Position = UDim2.new(0, 2, 0.5, -8)
+    c.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
+    c.BorderSizePixel = 0
+    c.Parent = bg
+    Instance.new("UICorner", c).CornerRadius = UDim.new(1, 0)
+
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, 0, 1, 0)
+    b.BackgroundTransparency = 1
+    b.Text = ""
+    b.Parent = h
+
+    local function upd(a, inst)
+        local pos = a and UDim2.new(0, 22, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+        local bgc = a and Color3.fromRGB(200, 200, 210) or Color3.fromRGB(90, 90, 100)
+        local mbgc = a and Color3.fromRGB(55, 55, 65) or Color3.fromRGB(32, 32, 38)
+        local tc = a and Color3.fromRGB(220, 220, 230) or Color3.fromRGB(160, 160, 175)
+        if inst then
+            c.Position = pos
+            c.BackgroundColor3 = bgc
+            bg.BackgroundColor3 = mbgc
+            l.TextColor3 = tc
+        else
+            TweenService:Create(c, TweenInfo.new(0.2), {Position = pos, BackgroundColor3 = bgc}):Play()
+            TweenService:Create(bg, TweenInfo.new(0.2), {BackgroundColor3 = mbgc}):Play()
+            TweenService:Create(l, TweenInfo.new(0.2), {TextColor3 = tc}):Play()
+        end
+    end
+
     upd(getState(), true)
     b.MouseButton1Click:Connect(function()
         local newState = not getState()
@@ -747,13 +849,29 @@ end
 
 local yPos = 55
 
-local semiInvisUpdate = CreateToggle("Semi Invis on Steal", yPos, function() return MS.SemiInvisStealEnabled end, function(state)
+SemiInvisMainUpdate, semiInvisKeyBtn = CreateToggleWithKeybind("Semi Invis", yPos, function() return MS.SemiInvisEnabled end, MS.SemiInvisKey,
+    function(state)
+        if state then
+            EnableSemiInvis()
+        else
+            DisableSemiInvis(true)
+        end
+    end,
+    function(btn)
+        waitingForSemiInvisKey = true
+        btn.Text = "..."
+    end
+)
+
+yPos = yPos + 40
+
+local semiInvisOnStealUpdate = CreateSmallToggle("Semi Invis on Steal", yPos, function() return MS.SemiInvisStealEnabled end, function(state)
     MS.SemiInvisStealEnabled = state
     if state then StartStealDetection() else StopStealDetection() end
     SaveSettings()
 end)
 
-yPos = yPos + 47
+yPos = yPos + 37
 local noAnimUpdate = CreateToggle("No Animation", yPos, function() return MS.NoAnimEnabled end, function(state)
     MS.NoAnimEnabled = state
     if state then EnableNoAnim() else DisableNoAnim() end
@@ -793,7 +911,7 @@ end)
 
 local StatusBar = Instance.new("Frame")
 StatusBar.Size = UDim2.new(0.9, 0, 0, 28)
-StatusBar.Position = UDim2.new(0.05, 0, 0, 337)
+StatusBar.Position = UDim2.new(0.05, 0, 0, 372)
 StatusBar.BackgroundColor3 = Color3.fromRGB(16, 16, 19)
 StatusBar.BorderSizePixel = 0
 StatusBar.Parent = Main
@@ -821,6 +939,23 @@ StatusText.Parent = StatusBar
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     
+    if waitingForSemiInvisKey and input.UserInputType == Enum.UserInputType.Keyboard then
+        waitingForSemiInvisKey = false
+        local keyName = input.KeyCode.Name
+        if keyName and keyName ~= "Unknown" then
+            MS.SemiInvisKey = keyName
+            if semiInvisKeyBtn then
+                semiInvisKeyBtn.Text = keyName
+            end
+            SaveSettings()
+        else
+            if semiInvisKeyBtn then
+                semiInvisKeyBtn.Text = MS.SemiInvisKey
+            end
+        end
+        return
+    end
+
     if waitingForSpeedKey and input.UserInputType == Enum.UserInputType.Keyboard then
         waitingForSpeedKey = false
         local keyName = input.KeyCode.Name
@@ -835,8 +970,18 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     end
     
     if input.UserInputType == Enum.UserInputType.Keyboard then
-        local keyCode = Enum.KeyCode[MS.SpeedBoostKey]
-        if keyCode and input.KeyCode == keyCode then
+        local semiKeyCode = Enum.KeyCode[MS.SemiInvisKey]
+        if semiKeyCode and input.KeyCode == semiKeyCode then
+            local newState = not MS.SemiInvisEnabled
+            if newState then
+                EnableSemiInvis()
+            else
+                DisableSemiInvis(true)
+            end
+        end
+
+        local speedKeyCode = Enum.KeyCode[MS.SpeedBoostKey]
+        if speedKeyCode and input.KeyCode == speedKeyCode then
             local newState = not MS.SpeedBoostEnabled
             MS.SpeedBoostEnabled = newState
             if newState then
@@ -871,7 +1016,7 @@ UserInputService.InputEnded:Connect(function(i)
 end)
 
 LocalPlayer.CharacterAdded:Connect(function(char)
-    CleanupStealInvis()
+    DisableSemiInvis(true)
     lastWalkSpeed = 100
     isWaitingForDelay = false
     stealStartTime = 0
@@ -882,7 +1027,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
             if isSeated then
                 isWaitingForDelay = false
                 stealStartTime = 0
-                if stealInvisActive then CleanupStealInvis() end
+                DisableSemiInvis(true)
             end
         end)
     end
@@ -895,7 +1040,7 @@ if LocalPlayer.Character then
             if isSeated then
                 isWaitingForDelay = false
                 stealStartTime = 0
-                if stealInvisActive then CleanupStealInvis() end
+                DisableSemiInvis(true)
             end
         end)
     end
@@ -931,8 +1076,7 @@ function MS.Disable()
     StopStealDetection()
     DisableSpeedBoost()
     DisableNoAnim()
-    CleanupStealInvis()
-    SaveSettings()
+    DisableSemiInvis(false)
     for _, conn in pairs(MS.Connections) do
         if conn then pcall(function() conn:Disconnect() end) end
     end
