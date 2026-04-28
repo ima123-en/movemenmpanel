@@ -28,6 +28,8 @@ getgenv().MovementSystem = {
     DepthOffset = 4.4,
     SemiInvisKey = "B",
     SpeedBoostKey = "V",
+    AutoOpenOnLoad = true,
+    GuiScale = 50,
     Connections = {}
 }
 
@@ -45,7 +47,9 @@ local function SaveSettings()
                 BodyAngle = MS.BodyAngle,
                 DepthOffset = MS.DepthOffset,
                 SemiInvisKey = MS.SemiInvisKey,
-                SpeedBoostKey = MS.SpeedBoostKey
+                SpeedBoostKey = MS.SpeedBoostKey,
+                AutoOpenOnLoad = MS.AutoOpenOnLoad,
+                GuiScale = MS.GuiScale
             }))
         end
     end)
@@ -64,6 +68,8 @@ local function LoadSettings()
             if data.DepthOffset then MS.DepthOffset = data.DepthOffset end
             if data.SemiInvisKey then MS.SemiInvisKey = data.SemiInvisKey end
             if data.SpeedBoostKey then MS.SpeedBoostKey = data.SpeedBoostKey end
+            if data.AutoOpenOnLoad ~= nil then MS.AutoOpenOnLoad = data.AutoOpenOnLoad end
+            if data.GuiScale ~= nil then MS.GuiScale = data.GuiScale end
         end
     end)
 end
@@ -477,10 +483,17 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = parent
 
+-- UIScale auf dem ScreenGui fuer globale Skalierung
+local GlobalUIScale = Instance.new("UIScale")
+GlobalUIScale.Name = "GlobalScale"
+GlobalUIScale.Scale = 0.3 + (1.0 - 0.3) * (MS.GuiScale / 100)
+GlobalUIScale.Parent = ScreenGui
+
 local Main = Instance.new("Frame")
 Main.Name = "Main"
-Main.Size = UDim2.new(0, 340, 0, 420)
-Main.Position = UDim2.new(0, 15, 1, -435)
+Main.AnchorPoint = Vector2.new(0, 1)
+Main.Size = UDim2.new(0, 340, 0, 490)
+Main.Position = UDim2.new(0, 15, 1, -15)
 Main.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
 Main.BorderSizePixel = 0
 Main.Parent = ScreenGui
@@ -909,9 +922,11 @@ local depthSlider = CreateSlider("Depth", yPos, 0.5, 10, MS.DepthOffset or 3.7, 
     SaveSettings()
 end)
 
+-- Status Bar
+yPos = yPos + 47
 local StatusBar = Instance.new("Frame")
 StatusBar.Size = UDim2.new(0.9, 0, 0, 28)
-StatusBar.Position = UDim2.new(0.05, 0, 0, 372)
+StatusBar.Position = UDim2.new(0.05, 0, 0, yPos)
 StatusBar.BackgroundColor3 = Color3.fromRGB(16, 16, 19)
 StatusBar.BorderSizePixel = 0
 StatusBar.Parent = Main
@@ -936,6 +951,61 @@ StatusText.TextSize = 12
 StatusText.TextXAlignment = Enum.TextXAlignment.Left
 StatusText.Parent = StatusBar
 
+-- ============================================
+-- SETTINGS SECTION
+-- ============================================
+yPos = yPos + 38
+
+local SettingsDivider = Instance.new("Frame")
+SettingsDivider.Size = UDim2.new(0.9, 0, 0, 1)
+SettingsDivider.Position = UDim2.new(0.05, 0, 0, yPos)
+SettingsDivider.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+SettingsDivider.BorderSizePixel = 0
+SettingsDivider.Parent = Main
+
+yPos = yPos + 8
+
+local SettingsLabel = Instance.new("TextLabel")
+SettingsLabel.Size = UDim2.new(0.9, 0, 0, 20)
+SettingsLabel.Position = UDim2.new(0.05, 0, 0, yPos)
+SettingsLabel.BackgroundTransparency = 1
+SettingsLabel.Text = "Settings"
+SettingsLabel.TextColor3 = Color3.fromRGB(130, 130, 140)
+SettingsLabel.Font = Enum.Font.GothamBold
+SettingsLabel.TextSize = 13
+SettingsLabel.TextXAlignment = Enum.TextXAlignment.Left
+SettingsLabel.Parent = Main
+
+yPos = yPos + 25
+
+-- Auto Open on Load Toggle
+local autoOpenUpdate = CreateSmallToggle("Auto Open on Load", yPos, function() return MS.AutoOpenOnLoad end, function(state)
+    MS.AutoOpenOnLoad = state
+    SaveSettings()
+end)
+
+yPos = yPos + 37
+
+-- GUI Scale Slider (20% bis 100%, Standard 50%)
+local guiScaleSlider = CreateSlider("GUI Scale", yPos, 20, 100, MS.GuiScale, function(val)
+    MS.GuiScale = val
+    local scale = 0.3 + (1.0 - 0.3) * ((val - 20) / (100 - 20))
+    TweenService:Create(GlobalUIScale, TweenInfo.new(0.15), {Scale = scale}):Play()
+    SaveSettings()
+end)
+
+-- Finale Hoehe setzen
+yPos = yPos + 50
+Main.Size = UDim2.new(0, 340, 0, yPos)
+
+-- Auto Open beim Start
+task.defer(function()
+    if not MS.AutoOpenOnLoad then
+        Main.Visible = false
+    end
+end)
+
+-- Keybind Handling
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     
@@ -970,6 +1040,12 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     end
     
     if input.UserInputType == Enum.UserInputType.Keyboard then
+        -- RightControl zum Ein-/Ausblenden
+        if input.KeyCode == Enum.KeyCode.RightControl then
+            Main.Visible = not Main.Visible
+            return
+        end
+        
         local semiKeyCode = Enum.KeyCode[MS.SemiInvisKey]
         if semiKeyCode and input.KeyCode == semiKeyCode then
             local newState = not MS.SemiInvisEnabled
@@ -995,6 +1071,7 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     end
 end)
 
+-- Dragging
 local dragging, dragStart, startPos
 DragBar.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
@@ -1015,6 +1092,7 @@ UserInputService.InputEnded:Connect(function(i)
     end
 end)
 
+-- Character Handling
 LocalPlayer.CharacterAdded:Connect(function(char)
     DisableSemiInvis(true)
     lastWalkSpeed = 100
@@ -1046,6 +1124,7 @@ if LocalPlayer.Character then
     end
 end
 
+-- Status Loop
 task.spawn(function()
     while ScreenGui and ScreenGui.Parent do
         if stealInvisActive then
@@ -1068,6 +1147,7 @@ task.spawn(function()
     end
 end)
 
+-- Startup
 if MS.SemiInvisStealEnabled then StartStealDetection() end
 if MS.NoAnimEnabled then EnableNoAnim() end
 if MS.SpeedBoostEnabled then EnableSpeedBoost() end
