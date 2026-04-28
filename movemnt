@@ -98,6 +98,9 @@ local waitingForSemiInvisKey = false
 local SemiInvisMainUpdate = nil
 local semiInvisKeyBtn = nil
 
+-- Global drag lock variable - sliders set this to prevent dragging
+local isInteractingWithSlider = false
+
 local function SetupGodmode()
     if godmodeSetup then return end
     local char = LocalPlayer.Character
@@ -483,16 +486,16 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = parent
 
--- UIScale auf dem ScreenGui fuer globale Skalierung
+-- UIScale auf ScreenGui
 local GlobalUIScale = Instance.new("UIScale")
 GlobalUIScale.Name = "GlobalScale"
-GlobalUIScale.Scale = 0.3 + (1.0 - 0.3) * (MS.GuiScale / 100)
+GlobalUIScale.Scale = 0.3 + (1.0 - 0.3) * ((MS.GuiScale - 20) / (100 - 20))
 GlobalUIScale.Parent = ScreenGui
 
 local Main = Instance.new("Frame")
 Main.Name = "Main"
 Main.AnchorPoint = Vector2.new(0, 1)
-Main.Size = UDim2.new(0, 340, 0, 490)
+Main.Size = UDim2.new(0, 340, 0, 530)
 Main.Position = UDim2.new(0, 15, 1, -15)
 Main.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
 Main.BorderSizePixel = 0
@@ -504,6 +507,71 @@ Stroke.Color = Color3.fromRGB(35, 35, 40)
 Stroke.Thickness = 1
 Stroke.Parent = Main
 
+-- ============================================
+-- OPEN BUTTON
+-- ============================================
+local OpenButton = Instance.new("TextButton")
+OpenButton.Name             = "OpenButton"
+OpenButton.AnchorPoint      = Vector2.new(0, 1)
+OpenButton.Size             = UDim2.new(0, 170, 0, 32)
+OpenButton.Position         = UDim2.new(0, 15, 1, -15)
+OpenButton.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+OpenButton.BorderSizePixel  = 0
+OpenButton.Text             = "Open Movement Panel"
+OpenButton.TextColor3       = Color3.fromRGB(170, 170, 180)
+OpenButton.Font             = Enum.Font.GothamBold
+OpenButton.TextSize         = 12
+OpenButton.AutoButtonColor  = false
+OpenButton.Visible          = false
+OpenButton.Parent           = ScreenGui
+Instance.new("UICorner", OpenButton).CornerRadius = UDim.new(0, 8)
+local openStroke = Instance.new("UIStroke", OpenButton)
+openStroke.Color     = Color3.fromRGB(40, 40, 48)
+openStroke.Thickness = 1
+
+OpenButton.MouseEnter:Connect(function()
+    TweenService:Create(OpenButton, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(28, 28, 34)}):Play()
+end)
+OpenButton.MouseLeave:Connect(function()
+    TweenService:Create(OpenButton, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(18, 18, 22)}):Play()
+end)
+
+local function updateOpenButtonVisibility()
+    OpenButton.Visible = not Main.Visible
+end
+
+OpenButton.MouseButton1Click:Connect(function()
+    Main.Visible = true
+    OpenButton.Visible = false
+end)
+
+-- Open Button dragging
+local openDragging, openDragStart, openStartPos
+OpenButton.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        openDragging = true
+        openDragStart = i.Position
+        openStartPos = OpenButton.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if openDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - openDragStart
+        if delta.Magnitude > 5 then
+            OpenButton.Position = UDim2.new(openStartPos.X.Scale, openStartPos.X.Offset + delta.X, openStartPos.Y.Scale, openStartPos.Y.Offset + delta.Y)
+        end
+    end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        openDragging = false
+    end
+end)
+
+-- ============================================
+-- PANEL HEADER
+-- ============================================
+
 local DragBar = Instance.new("Frame")
 DragBar.Size = UDim2.new(1, 0, 0, 40)
 DragBar.Position = UDim2.new(0, 0, 0, 0)
@@ -511,7 +579,7 @@ DragBar.BackgroundTransparency = 1
 DragBar.Parent = Main
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -20, 0, 36)
+Title.Size = UDim2.new(1, -50, 0, 36)
 Title.Position = UDim2.new(0, 14, 0, 4)
 Title.BackgroundTransparency = 1
 Title.Text = "Movement"
@@ -521,12 +589,41 @@ Title.TextSize = 18
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = Main
 
+-- Close Button
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size               = UDim2.new(0, 26, 0, 26)
+CloseBtn.Position           = UDim2.new(1, -36, 0, 6)
+CloseBtn.BackgroundColor3   = Color3.fromRGB(25, 25, 30)
+CloseBtn.BorderSizePixel    = 0
+CloseBtn.Text               = "×"
+CloseBtn.TextColor3         = Color3.fromRGB(140, 140, 150)
+CloseBtn.Font               = Enum.Font.GothamBold
+CloseBtn.TextSize           = 18
+CloseBtn.AutoButtonColor    = false
+CloseBtn.Parent             = Main
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
+
+CloseBtn.MouseEnter:Connect(function()
+    TweenService:Create(CloseBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(60, 30, 30), TextColor3 = Color3.fromRGB(255, 100, 100)}):Play()
+end)
+CloseBtn.MouseLeave:Connect(function()
+    TweenService:Create(CloseBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(25, 25, 30), TextColor3 = Color3.fromRGB(140, 140, 150)}):Play()
+end)
+CloseBtn.MouseButton1Click:Connect(function()
+    Main.Visible = false
+    updateOpenButtonVisibility()
+end)
+
 local Divider = Instance.new("Frame")
 Divider.Size = UDim2.new(0.9, 0, 0, 1)
 Divider.Position = UDim2.new(0.05, 0, 0, 45)
 Divider.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
 Divider.BorderSizePixel = 0
 Divider.Parent = Main
+
+-- ============================================
+-- UI ELEMENT CREATORS
+-- ============================================
 
 local function CreateToggle(name, yPos, getState, onToggle)
     local h = Instance.new("Frame")
@@ -641,10 +738,7 @@ local function CreateSmallToggle(name, yPos, getState, onToggle)
         local mbgc = a and Color3.fromRGB(55, 55, 65) or Color3.fromRGB(32, 32, 38)
         local tc = a and Color3.fromRGB(220, 220, 230) or Color3.fromRGB(160, 160, 175)
         if inst then
-            c.Position = pos
-            c.BackgroundColor3 = bgc
-            bg.BackgroundColor3 = mbgc
-            l.TextColor3 = tc
+            c.Position = pos c.BackgroundColor3 = bgc bg.BackgroundColor3 = mbgc l.TextColor3 = tc
         else
             TweenService:Create(c, TweenInfo.new(0.2), {Position = pos, BackgroundColor3 = bgc}):Play()
             TweenService:Create(bg, TweenInfo.new(0.2), {BackgroundColor3 = mbgc}):Play()
@@ -776,7 +870,7 @@ local function CreateSlider(labelText, yPos, minVal, maxVal, initialValue, onCha
     valueLabelBG.BorderSizePixel = 0
     Instance.new("UICorner", valueLabelBG).CornerRadius = UDim.new(0, 4)
 
-    local valueLabel = Instance.new("TextLabel", valueLabelBG)
+    local valueLabel = Instance.new("TextBox", valueLabelBG)
     valueLabel.Size = UDim2.new(1, 0, 1, 0)
     valueLabel.Position = UDim2.new(0, 0, 0, 0)
     valueLabel.BackgroundTransparency = 1
@@ -785,8 +879,10 @@ local function CreateSlider(labelText, yPos, minVal, maxVal, initialValue, onCha
     valueLabel.TextSize = 13
     valueLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
     valueLabel.TextXAlignment = Enum.TextXAlignment.Center
+    valueLabel.ClearTextOnFocus = false
+    valueLabel.PlaceholderColor3 = Color3.fromRGB(100, 100, 110)
 
-    local dragging = false
+    local sliderDragging = false
     local currentValue = math.clamp(initialValue, minVal, maxVal)
 
     local function setFromAlpha(a, instant)
@@ -794,7 +890,9 @@ local function CreateSlider(labelText, yPos, minVal, maxVal, initialValue, onCha
         local value = minVal + (maxVal - minVal) * a
         value = math.floor(value * 10 + 0.5) / 10
         currentValue = value
-        valueLabel.Text = tostring(value)
+        if not valueLabel:IsFocused() then
+            valueLabel.Text = tostring(value)
+        end
 
         local sizeX = bar.AbsoluteSize.X
         if sizeX <= 0 then return end
@@ -819,28 +917,48 @@ local function CreateSlider(labelText, yPos, minVal, maxVal, initialValue, onCha
         setFromAlpha(alpha, false)
     end
 
+    -- TextBox input: user can type value directly
+    valueLabel.FocusLost:Connect(function(enterPressed)
+        local txt = valueLabel.Text:gsub("%%", "")
+        local num = tonumber(txt)
+        if num then
+            num = math.clamp(num, minVal, maxVal)
+            num = math.floor(num * 10 + 0.5) / 10
+            currentValue = num
+            local alpha = (num - minVal) / (maxVal - minVal)
+            setFromAlpha(alpha, false)
+        else
+            valueLabel.Text = tostring(currentValue)
+        end
+    end)
+
     bar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
+            sliderDragging = true
+            isInteractingWithSlider = true
             updateFromX(input.Position.X)
         end
     end)
 
     knob.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
+            sliderDragging = true
+            isInteractingWithSlider = true
         end
     end)
 
     UserInputService.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        if sliderDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
             updateFromX(input.Position.X)
         end
     end)
 
     UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
+            if sliderDragging then
+                sliderDragging = false
+                isInteractingWithSlider = false
+            end
         end
     end)
 
@@ -859,6 +977,10 @@ local function CreateSlider(labelText, yPos, minVal, maxVal, initialValue, onCha
 
     return setValueExternal
 end
+
+-- ============================================
+-- PANEL ELEMENTS
+-- ============================================
 
 local yPos = 55
 
@@ -956,12 +1078,11 @@ StatusText.Parent = StatusBar
 -- ============================================
 yPos = yPos + 38
 
-local SettingsDivider = Instance.new("Frame")
+local SettingsDivider = Instance.new("Frame", Main)
 SettingsDivider.Size = UDim2.new(0.9, 0, 0, 1)
 SettingsDivider.Position = UDim2.new(0.05, 0, 0, yPos)
 SettingsDivider.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
 SettingsDivider.BorderSizePixel = 0
-SettingsDivider.Parent = Main
 
 yPos = yPos + 8
 
@@ -986,26 +1107,169 @@ end)
 
 yPos = yPos + 37
 
--- GUI Scale Slider (20% bis 100%, Standard 50%)
-local guiScaleSlider = CreateSlider("GUI Scale", yPos, 20, 100, MS.GuiScale, function(val)
-    MS.GuiScale = val
-    local scale = 0.3 + (1.0 - 0.3) * ((val - 20) / (100 - 20))
-    TweenService:Create(GlobalUIScale, TweenInfo.new(0.15), {Scale = scale}):Play()
+-- GUI Scale Slider (with text input)
+local guiScaleH = Instance.new("Frame", Main)
+guiScaleH.Size = UDim2.new(0.9, 0, 0, 42)
+guiScaleH.Position = UDim2.new(0.05, 0, 0, yPos)
+guiScaleH.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+Instance.new("UICorner", guiScaleH).CornerRadius = UDim.new(0, 8)
+
+local guiScaleLabel = Instance.new("TextLabel", guiScaleH)
+guiScaleLabel.Size = UDim2.new(0.35, 0, 1, 0)
+guiScaleLabel.Position = UDim2.new(0, 12, 0, 0)
+guiScaleLabel.BackgroundTransparency = 1
+guiScaleLabel.Text = "GUI Scale"
+guiScaleLabel.Font = Enum.Font.Gotham
+guiScaleLabel.TextSize = 14
+guiScaleLabel.TextXAlignment = Enum.TextXAlignment.Left
+guiScaleLabel.TextColor3 = Color3.fromRGB(170, 170, 180)
+
+local guiScaleBar = Instance.new("Frame", guiScaleH)
+guiScaleBar.Size = UDim2.new(0, 110, 0, 6)
+guiScaleBar.Position = UDim2.new(0, 115, 0.5, -3)
+guiScaleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+guiScaleBar.BorderSizePixel = 0
+Instance.new("UICorner", guiScaleBar).CornerRadius = UDim.new(1, 0)
+
+local guiScaleFill = Instance.new("Frame", guiScaleBar)
+guiScaleFill.Size = UDim2.new(0, 0, 1, 0)
+guiScaleFill.BackgroundColor3 = Color3.fromRGB(200, 200, 210)
+guiScaleFill.BorderSizePixel = 0
+Instance.new("UICorner", guiScaleFill).CornerRadius = UDim.new(1, 0)
+
+local guiScaleKnob = Instance.new("Frame", guiScaleBar)
+guiScaleKnob.Size = UDim2.new(0, 12, 0, 12)
+guiScaleKnob.Position = UDim2.new(0, -6, 0.5, -6)
+guiScaleKnob.BackgroundColor3 = Color3.fromRGB(230, 230, 235)
+guiScaleKnob.BorderSizePixel = 0
+Instance.new("UICorner", guiScaleKnob).CornerRadius = UDim.new(1, 0)
+
+local guiScaleValueBG = Instance.new("Frame", guiScaleH)
+guiScaleValueBG.Size = UDim2.new(0, 50, 0, 20)
+guiScaleValueBG.Position = UDim2.new(1, -58, 0.5, -10)
+guiScaleValueBG.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+guiScaleValueBG.BorderSizePixel = 0
+Instance.new("UICorner", guiScaleValueBG).CornerRadius = UDim.new(0, 4)
+
+local guiScaleInput = Instance.new("TextBox", guiScaleValueBG)
+guiScaleInput.Size = UDim2.new(1, 0, 1, 0)
+guiScaleInput.BackgroundTransparency = 1
+guiScaleInput.Text = tostring(MS.GuiScale) .. "%"
+guiScaleInput.Font = Enum.Font.GothamBold
+guiScaleInput.TextSize = 13
+guiScaleInput.TextColor3 = Color3.fromRGB(200, 200, 210)
+guiScaleInput.TextXAlignment = Enum.TextXAlignment.Center
+guiScaleInput.ClearTextOnFocus = false
+guiScaleInput.PlaceholderColor3 = Color3.fromRGB(100, 100, 110)
+
+local guiScaleDragging = false
+
+local function setGuiScaleFromAlpha(a, instant)
+    a = math.clamp(a, 0, 1)
+    local value = math.floor(20 + (100 - 20) * a + 0.5)
+    MS.GuiScale = value
+    if not guiScaleInput:IsFocused() then
+        guiScaleInput.Text = tostring(value) .. "%"
+    end
+    
+    local sizeX = guiScaleBar.AbsoluteSize.X
+    if sizeX <= 0 then return end
+    local x = a * sizeX
+    
+    if instant then
+        guiScaleFill.Size = UDim2.new(0, x, 1, 0)
+        guiScaleKnob.Position = UDim2.new(0, x - 6, 0.5, -6)
+    else
+        TweenService:Create(guiScaleFill, TweenInfo.new(0.1), {Size = UDim2.new(0, x, 1, 0)}):Play()
+        TweenService:Create(guiScaleKnob, TweenInfo.new(0.1), {Position = UDim2.new(0, x - 6, 0.5, -6)}):Play()
+    end
+    
+    local scale = 0.3 + (1.0 - 0.3) * ((value - 20) / (100 - 20))
+    if instant then
+        GlobalUIScale.Scale = scale
+    else
+        TweenService:Create(GlobalUIScale, TweenInfo.new(0.15), {Scale = scale}):Play()
+    end
     SaveSettings()
+end
+
+local function updateGuiScaleFromX(px)
+    local absPos = guiScaleBar.AbsolutePosition.X
+    local sizeX = guiScaleBar.AbsoluteSize.X
+    if sizeX <= 0 then return end
+    local alpha = (px - absPos) / sizeX
+    setGuiScaleFromAlpha(alpha, false)
+end
+
+-- TextBox input for GUI Scale
+guiScaleInput.FocusLost:Connect(function()
+    local txt = guiScaleInput.Text:gsub("%%", "")
+    local num = tonumber(txt)
+    if num then
+        num = math.clamp(math.floor(num + 0.5), 20, 100)
+        MS.GuiScale = num
+        local alpha = (num - 20) / (100 - 20)
+        setGuiScaleFromAlpha(alpha, false)
+    else
+        guiScaleInput.Text = tostring(MS.GuiScale) .. "%"
+    end
 end)
 
--- Finale Hoehe setzen
+guiScaleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        guiScaleDragging = true
+        isInteractingWithSlider = true
+        updateGuiScaleFromX(input.Position.X)
+    end
+end)
+
+guiScaleKnob.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        guiScaleDragging = true
+        isInteractingWithSlider = true
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if guiScaleDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        updateGuiScaleFromX(input.Position.X)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if guiScaleDragging then
+            guiScaleDragging = false
+            isInteractingWithSlider = false
+        end
+    end
+end)
+
+-- Finale Hoehe
 yPos = yPos + 50
 Main.Size = UDim2.new(0, 340, 0, yPos)
+
+-- Slider initial setzen
+task.defer(function()
+    local alpha = (MS.GuiScale - 20) / (100 - 20)
+    setGuiScaleFromAlpha(alpha, true)
+end)
 
 -- Auto Open beim Start
 task.defer(function()
     if not MS.AutoOpenOnLoad then
         Main.Visible = false
+        OpenButton.Visible = true
+    else
+        Main.Visible = true
+        OpenButton.Visible = false
     end
 end)
 
--- Keybind Handling
+-- ============================================
+-- KEYBIND INPUT
+-- ============================================
+
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     
@@ -1014,14 +1278,10 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         local keyName = input.KeyCode.Name
         if keyName and keyName ~= "Unknown" then
             MS.SemiInvisKey = keyName
-            if semiInvisKeyBtn then
-                semiInvisKeyBtn.Text = keyName
-            end
+            if semiInvisKeyBtn then semiInvisKeyBtn.Text = keyName end
             SaveSettings()
         else
-            if semiInvisKeyBtn then
-                semiInvisKeyBtn.Text = MS.SemiInvisKey
-            end
+            if semiInvisKeyBtn then semiInvisKeyBtn.Text = MS.SemiInvisKey end
         end
         return
     end
@@ -1040,9 +1300,9 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     end
     
     if input.UserInputType == Enum.UserInputType.Keyboard then
-        -- RightControl zum Ein-/Ausblenden
         if input.KeyCode == Enum.KeyCode.RightControl then
             Main.Visible = not Main.Visible
+            updateOpenButtonVisibility()
             return
         end
         
@@ -1060,20 +1320,20 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         if speedKeyCode and input.KeyCode == speedKeyCode then
             local newState = not MS.SpeedBoostEnabled
             MS.SpeedBoostEnabled = newState
-            if newState then
-                EnableSpeedBoost()
-            else
-                DisableSpeedBoost()
-            end
+            if newState then EnableSpeedBoost() else DisableSpeedBoost() end
             speedBoostUpdate(newState, false)
             SaveSettings()
         end
     end
 end)
 
--- Dragging
+-- ============================================
+-- DRAGGING (blocked when slider is active)
+-- ============================================
+
 local dragging, dragStart, startPos
 DragBar.InputBegan:Connect(function(i)
+    if isInteractingWithSlider then return end
     if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
         dragging = true
         dragStart = i.Position
@@ -1081,7 +1341,7 @@ DragBar.InputBegan:Connect(function(i)
     end
 end)
 UserInputService.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+    if dragging and not isInteractingWithSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - dragStart
         Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
@@ -1092,7 +1352,10 @@ UserInputService.InputEnded:Connect(function(i)
     end
 end)
 
--- Character Handling
+-- ============================================
+-- CHARACTER HANDLING
+-- ============================================
+
 LocalPlayer.CharacterAdded:Connect(function(char)
     DisableSemiInvis(true)
     lastWalkSpeed = 100
