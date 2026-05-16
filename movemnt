@@ -8,48 +8,41 @@ local HttpService = game:GetService("HttpService")
 local Workspace = game:GetService("Workspace")
 
 local LocalPlayer = Players.LocalPlayer
-local SAVE_KEY = "Movement_Settings_" .. LocalPlayer.UserId
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-if LocalPlayer.PlayerGui:FindFirstChild("MovementPanel") then
-    LocalPlayer.PlayerGui.MovementPanel:Destroy()
+-- Cleanup existing panel
+if PlayerGui:FindFirstChild("InvisStealPanel") then
+    PlayerGui:FindFirstChild("InvisStealPanel"):Destroy()
 end
 
-if getgenv().MovementSystem then
-    pcall(function() getgenv().MovementSystem.Disable() end)
-end
+local _G = getgenv() or _G
 
-getgenv().MovementSystem = {
-    SemiInvisEnabled = false,
-    SemiInvisStealEnabled = false,
-    SpeedBoostEnabled = false,
-    NoAnimEnabled = false,
-    StealSpeed = 29.5,
-    BodyAngle = 233,
-    DepthOffset = 4.4,
-    SemiInvisKey = "B",
-    SpeedBoostKey = "V",
-    AutoOpenOnLoad = true,
-    GuiScale = 50,
-    Connections = {}
-}
+-- Config
+_G.InvisStealAngle = _G.InvisStealAngle or 233
+_G.SinkSliderValue = _G.SinkSliderValue or 5
+_G.AutoRecoverLagback = (_G.AutoRecoverLagback ~= false)
+_G.AutoInvisDuringSteal = (_G.AutoInvisDuringSteal == true)
+_G.INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY or "I"
+_G.invisibleStealEnabled = _G.invisibleStealEnabled or false
+_G.RecoveryInProgress = _G.RecoveryInProgress or false
+_G.InvisStealSpeed = _G.InvisStealSpeed or 25.5
+_G.AutoOpenInvisPanel = _G.AutoOpenInvisPanel or true
+_G.InvisGuiScale = _G.InvisGuiScale or 50
 
-local MS = getgenv().MovementSystem
+local SAVE_KEY = "InvisSteal_Settings_" .. LocalPlayer.UserId
 
 local function SaveSettings()
     pcall(function()
         if writefile then
             writefile(SAVE_KEY .. ".json", HttpService:JSONEncode({
-                SemiInvisEnabled = MS.SemiInvisEnabled,
-                SemiInvisStealEnabled = MS.SemiInvisStealEnabled,
-                SpeedBoostEnabled = MS.SpeedBoostEnabled,
-                NoAnimEnabled = MS.NoAnimEnabled,
-                StealSpeed = MS.StealSpeed,
-                BodyAngle = MS.BodyAngle,
-                DepthOffset = MS.DepthOffset,
-                SemiInvisKey = MS.SemiInvisKey,
-                SpeedBoostKey = MS.SpeedBoostKey,
-                AutoOpenOnLoad = MS.AutoOpenOnLoad,
-                GuiScale = MS.GuiScale
+                InvisStealAngle = _G.InvisStealAngle,
+                SinkSliderValue = _G.SinkSliderValue,
+                AutoRecoverLagback = _G.AutoRecoverLagback,
+                AutoInvisDuringSteal = _G.AutoInvisDuringSteal,
+                INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY,
+                InvisStealSpeed = _G.InvisStealSpeed,
+                AutoOpenInvisPanel = _G.AutoOpenInvisPanel,
+                InvisGuiScale = _G.InvisGuiScale
             }))
         end
     end)
@@ -59,366 +52,526 @@ local function LoadSettings()
     pcall(function()
         if readfile and isfile and isfile(SAVE_KEY .. ".json") then
             local data = HttpService:JSONDecode(readfile(SAVE_KEY .. ".json"))
-            if data.SemiInvisEnabled ~= nil then MS.SemiInvisEnabled = data.SemiInvisEnabled end
-            if data.SemiInvisStealEnabled ~= nil then MS.SemiInvisStealEnabled = data.SemiInvisStealEnabled end
-            if data.SpeedBoostEnabled ~= nil then MS.SpeedBoostEnabled = data.SpeedBoostEnabled end
-            if data.NoAnimEnabled ~= nil then MS.NoAnimEnabled = data.NoAnimEnabled end
-            if data.StealSpeed then MS.StealSpeed = data.StealSpeed end
-            if data.BodyAngle then MS.BodyAngle = data.BodyAngle end
-            if data.DepthOffset then MS.DepthOffset = data.DepthOffset end
-            if data.SemiInvisKey then MS.SemiInvisKey = data.SemiInvisKey end
-            if data.SpeedBoostKey then MS.SpeedBoostKey = data.SpeedBoostKey end
-            if data.AutoOpenOnLoad ~= nil then MS.AutoOpenOnLoad = data.AutoOpenOnLoad end
-            if data.GuiScale ~= nil then MS.GuiScale = data.GuiScale end
+            if data.InvisStealAngle then _G.InvisStealAngle = data.InvisStealAngle end
+            if data.SinkSliderValue then _G.SinkSliderValue = data.SinkSliderValue end
+            if data.AutoRecoverLagback ~= nil then _G.AutoRecoverLagback = data.AutoRecoverLagback end
+            if data.AutoInvisDuringSteal ~= nil then _G.AutoInvisDuringSteal = data.AutoInvisDuringSteal end
+            if data.INVISIBLE_STEAL_KEY then _G.INVISIBLE_STEAL_KEY = data.INVISIBLE_STEAL_KEY end
+            if data.InvisStealSpeed then _G.InvisStealSpeed = data.InvisStealSpeed end
+            if data.AutoOpenInvisPanel ~= nil then _G.AutoOpenInvisPanel = data.AutoOpenInvisPanel end
+            if data.InvisGuiScale ~= nil then _G.InvisGuiScale = data.InvisGuiScale end
         end
     end)
 end
 
 LoadSettings()
 
-local STEAL_DELAY = 0.95
-
-local stealInvisActive = false
-local stealClone = nil
-local stealRaizAntiga = nil
-local stealQuadril = nil
-local stealFaixaAnimacao = nil
-local stealUpdateConnection = nil
-local stealDetectionConnection = nil
-local stealHealthConnection = nil
-local lastWalkSpeed = 100
-local stealStartTime = 0
-local isWaitingForDelay = false
-local godmodeSetup = false
-
-local SpeedConnection = nil
-local NoAnimLoop = nil
-local waitingForSpeedKey = false
-local waitingForSemiInvisKey = false
-local SemiInvisMainUpdate = nil
-local semiInvisKeyBtn = nil
-
--- Global drag lock variable - sliders set this to prevent dragging
+-- Global slider interaction flag
 local isInteractingWithSlider = false
 
-local function SetupGodmode()
-    if godmodeSetup then return end
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChild("Humanoid")
-    if not hum then return end
-    pcall(function()
-        hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
-    end)
-    godmodeSetup = true
+-- ============================================
+-- INVISIBLE STEAL LOGIC
+-- ============================================
+
+local animPlaying = false
+local tracks = {}
+local clone, oldRoot, hip, connection
+local folderConnections = {}
+local lagbackCallCount = 0
+local lagbackWindowStart = 0
+local lastLagbackTime = 0
+
+local function clearAllGhosts()
+    lagbackCallCount = 0
+    lastLagbackTime = 0
 end
 
-local function DisableGodmode()
-    if not godmodeSetup then return end
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChild("Humanoid")
-    if not hum then return end
-    pcall(function()
-        hum:SetStateEnabled(Enum.HumanoidStateType.Dead, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Physics, true)
-    end)
-    godmodeSetup = false
-end
-
-local function IsSeated()
-    local char = LocalPlayer.Character
-    if not char then return false end
-    local hum = char:FindFirstChild("Humanoid")
-    if not hum then return false end
-    return hum.Sit == true
-end
-
-local function RemoveFolders()
-    pcall(function()
-        local playerFolder = workspace:FindFirstChild(LocalPlayer.Name)
-        if not playerFolder then return end
-        local doubleRig = playerFolder:FindFirstChild("DoubleRig")
-        if doubleRig then doubleRig:Destroy() end
-        local constraints = playerFolder:FindFirstChild("Constraints")
-        if constraints then constraints:Destroy() end
-    end)
-end
-
-local function CleanupStealInvis()
-    stealInvisActive = false
-    isWaitingForDelay = false
-    stealStartTime = 0
+local function createServerGhost(position)
+    local now = tick()
+    if now - lastLagbackTime < 0.15 then return end
+    lastLagbackTime = now
     
-    if stealFaixaAnimacao then
-        pcall(function()
-            stealFaixaAnimacao:Stop()
-            stealFaixaAnimacao:Destroy()
-        end)
-        stealFaixaAnimacao = nil
+    if now - lagbackWindowStart > 3 then
+        lagbackCallCount = 0
+        lagbackWindowStart = now
     end
     
-    if stealUpdateConnection then
-        pcall(function() stealUpdateConnection:Disconnect() end)
-        stealUpdateConnection = nil
-    end
+    lagbackCallCount = lagbackCallCount + 1
     
-    if stealHealthConnection then
-        pcall(function() stealHealthConnection:Disconnect() end)
-        stealHealthConnection = nil
+    if lagbackCallCount >= 15 then
+        if _G.toggleInvisibleSteal and _G.invisibleStealEnabled then
+            task.spawn(function()
+                pcall(_G.toggleInvisibleSteal)
+            end)
+        end
+        lagbackCallCount = 0
+        return
     end
+end
+
+local function removeFolders()
+    local pf = Workspace:FindFirstChild(LocalPlayer.Name)
+    if not pf then return end
     
-    if stealRaizAntiga and stealClone and LocalPlayer.Character then
-        pcall(function()
-            local hum = LocalPlayer.Character:FindFirstChild("Humanoid")
-            if not stealRaizAntiga:IsDescendantOf(game) then
-                stealClone = nil
-                stealRaizAntiga = nil
-                stealQuadril = nil
-                DisableGodmode()
-                return
-            end
-            
-            local currentCFrame = stealClone.CFrame
-            local currentVelocity = stealClone.AssemblyLinearVelocity or Vector3.zero
-            
-            local paiTemporario = Instance.new("Model")
-            paiTemporario.Parent = game
-            LocalPlayer.Character.Parent = paiTemporario
-            stealRaizAntiga.Parent = LocalPlayer.Character
-            LocalPlayer.Character.PrimaryPart = stealRaizAntiga
-            LocalPlayer.Character.Parent = game.Workspace
-            stealRaizAntiga.CanCollide = true
-            
-            for _, v in pairs(LocalPlayer.Character:GetDescendants()) do
-                if v:IsA("Weld") or v:IsA("Motor6D") then
-                    if v.Part0 == stealClone then v.Part0 = stealRaizAntiga end
-                    if v.Part1 == stealClone then v.Part1 = stealRaizAntiga end
-                end
-            end
-            
-            stealClone:Destroy()
-            stealRaizAntiga.CFrame = currentCFrame
-            stealRaizAntiga.AssemblyLinearVelocity = currentVelocity
-            stealRaizAntiga.AssemblyAngularVelocity = Vector3.zero
-            
-            paiTemporario:Destroy()
-            if hum then hum.HipHeight = stealQuadril or 2 end
+    local dr = pf:FindFirstChild("DoubleRig")
+    if dr then
+        task.spawn(function()
+            pcall(function() dr:Destroy() end)
         end)
     end
     
-    stealClone = nil
-    stealRaizAntiga = nil
-    stealQuadril = nil
-    DisableGodmode()
-    RemoveFolders()
-end
-
-local function PlayStealAnimation()
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChild("Humanoid")
-    if not hum or hum.Health <= 0 then return end
-    
-    pcall(function()
-        local anim = Instance.new("Animation")
-        anim.AnimationId = "http://www.roblox.com/asset/?id=18537363391"
-        local animator = hum:FindFirstChild("Animator") or Instance.new("Animator", hum)
-        stealFaixaAnimacao = animator:LoadAnimation(anim)
-        stealFaixaAnimacao.Priority = Enum.AnimationPriority.Action4
-        stealFaixaAnimacao:Play(0, 1, 0)
-        anim:Destroy()
-        
-        local animStoppedConn
-        animStoppedConn = stealFaixaAnimacao.Stopped:Connect(function()
-            if stealInvisActive and not IsSeated() then
-                task.defer(PlayStealAnimation)
-            end
+    local cs = pf:FindFirstChild("Constraints")
+    if cs then
+        task.spawn(function()
+            pcall(function() cs:Destroy() end)
         end)
-        table.insert(MS.Connections, animStoppedConn)
-        
-        task.defer(function()
-            if stealFaixaAnimacao then
-                stealFaixaAnimacao.TimePosition = 0.7
-                task.delay(1, function()
-                    if stealFaixaAnimacao then
-                        pcall(function() stealFaixaAnimacao:AdjustSpeed(math.huge) end)
+    end
+    
+    local conn = pf.ChildAdded:Connect(function(child)
+        if child.Name == "DoubleRig" or child.Name == "Constraints" then
+            task.defer(function()
+                task.wait(0.05)
+                pcall(function() 
+                    if child and child.Parent then
+                        child:Destroy() 
                     end
                 end)
-            end
-        end)
+            end)
+        end
     end)
+    table.insert(folderConnections, conn)
 end
 
-local function ActivateStealInvis()
-    if stealInvisActive or IsSeated() then return false end
-    if not LocalPlayer.Character then return false end
+local function doClone()
+    local character = LocalPlayer.Character
+    if not character then return false end
     
-    local hum = LocalPlayer.Character:FindFirstChild("Humanoid")
-    local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return false end
     
-    if not hum or not hrp or hum.Health <= 0 or hum.Sit then return false end
+    hip = humanoid.HipHeight
+    oldRoot = character:FindFirstChild("HumanoidRootPart")
+    if not oldRoot or not oldRoot.Parent then return false end
     
-    RemoveFolders()
-    SetupGodmode()
-    
-    stealQuadril = hum.HipHeight
-    stealRaizAntiga = hrp
-
-    local paiTemporario = Instance.new("Model")
-    paiTemporario.Parent = game
-    LocalPlayer.Character.Parent = paiTemporario
-    stealClone = stealRaizAntiga:Clone()
-    stealClone.Parent = LocalPlayer.Character
-    stealRaizAntiga.Parent = game.Workspace.CurrentCamera
-    stealClone.CFrame = stealRaizAntiga.CFrame
-    LocalPlayer.Character.PrimaryPart = stealClone
-    LocalPlayer.Character.Parent = game.Workspace
-    
-    for _, v in pairs(LocalPlayer.Character:GetDescendants()) do
-        if v:IsA("Weld") or v:IsA("Motor6D") then
-            if v.Part0 == stealRaizAntiga then v.Part0 = stealClone end
-            if v.Part1 == stealRaizAntiga then v.Part1 = stealClone end
+    for _, c in pairs(oldRoot:GetChildren()) do
+        if c:IsA("Attachment") or c:IsA("Beam") or c:IsA("ParticleEmitter") then
+            pcall(function() c:Destroy() end)
         end
     end
-    paiTemporario:Destroy()
-
-    stealInvisActive = true
     
-    stealHealthConnection = hum.HealthChanged:Connect(function(newHealth)
-        if stealInvisActive and newHealth <= 0 then hum.Health = hum.MaxHealth end
+    local success, err = pcall(function()
+        local tmp = Instance.new("Model")
+        tmp.Parent = game
+        character.Parent = tmp
+        
+        clone = oldRoot:Clone()
+        clone.Name = "HumanoidRootPart"
+        clone.Transparency = oldRoot.Transparency
+        clone.CanCollide = false
+        
+        for _, c in pairs(clone:GetChildren()) do
+            if c:IsA("Attachment") or c:IsA("Beam") or c:IsA("ParticleEmitter") then
+                c:Destroy()
+            end
+        end
+        
+        clone.Parent = character
+        oldRoot.Parent = Workspace.CurrentCamera
+        clone.CFrame = oldRoot.CFrame
+        character.PrimaryPart = clone
+        character.Parent = Workspace
+        
+        for _, v in pairs(character:GetDescendants()) do
+            if v:IsA("Weld") or v:IsA("Motor6D") then
+                if v.Part0 == oldRoot then v.Part0 = clone end
+                if v.Part1 == oldRoot then v.Part1 = clone end
+            end
+        end
+        
+        tmp:Destroy()
     end)
     
-    task.delay(0.1, function()
-        if stealInvisActive then PlayStealAnimation() end
-    end)
-
-    stealUpdateConnection = RunService.PreSimulation:Connect(function()
-        if not stealInvisActive then return end
-        if IsSeated() then
-            task.defer(CleanupStealInvis)
-            return
-        end
-        local char = LocalPlayer.Character
-        if not char then return end
-        local h = char:FindFirstChild("Humanoid")
-        if not h or not stealRaizAntiga or not stealRaizAntiga.Parent or not stealClone or not stealClone.Parent then return end
-        
-        if h.Health <= 1 then h.Health = h.MaxHealth end
-        
-        local raiz = stealClone
-        if raiz then
-            local rotAngle = MS.BodyAngle or 233
-            local sinkValue = MS.DepthOffset or 3.7
-            local sa = sinkValue * 0.5
-
-            local cf = raiz.CFrame - Vector3.new(0, sa, 0)
-            stealRaizAntiga.CFrame = cf * CFrame.Angles(math.rad(rotAngle), 0, 0)
-            stealRaizAntiga.AssemblyLinearVelocity = raiz.AssemblyLinearVelocity
-            stealRaizAntiga.AssemblyAngularVelocity = Vector3.zero
-            stealRaizAntiga.CanCollide = false
-        end
-    end)
-
+    if not success then
+        warn("Clone failed:", err)
+        return false
+    end
+    
     return true
 end
 
-local function EnableSemiInvis()
-    if not stealInvisActive then
-        local ok = ActivateStealInvis()
-        MS.SemiInvisEnabled = ok
-    else
-        MS.SemiInvisEnabled = true
-    end
-    if SemiInvisMainUpdate then
-        SemiInvisMainUpdate(MS.SemiInvisEnabled, false)
-    end
-    SaveSettings()
-end
-
-local function DisableSemiInvis(updateToggle)
-    if stealInvisActive or isWaitingForDelay then
-        CleanupStealInvis()
-    end
-    MS.SemiInvisEnabled = false
-    if updateToggle and SemiInvisMainUpdate then
-        SemiInvisMainUpdate(false, false)
-    end
-    SaveSettings()
-end
-
-local function StartStealDetection()
-    if stealDetectionConnection then return end
-    lastWalkSpeed = 100
-    stealStartTime = 0
-    isWaitingForDelay = false
+local function revertClone()
+    local character = LocalPlayer.Character
+    if not character then return end
     
-    stealDetectionConnection = RunService.Heartbeat:Connect(function()
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid then return end
+    
+    if not oldRoot or not oldRoot:IsDescendantOf(Workspace) then 
+        if oldRoot then
+            pcall(function() oldRoot:Destroy() end)
+        end
+        oldRoot = nil
+        clone = nil
+        return 
+    end
+    
+    local success = pcall(function()
+        local tmp = Instance.new("Model")
+        tmp.Parent = game
+        character.Parent = tmp
+        oldRoot.Parent = character
+        character.PrimaryPart = oldRoot
+        character.Parent = Workspace
+        oldRoot.CanCollide = true
+        
+        for _, v in pairs(character:GetDescendants()) do
+            if v:IsA("Weld") or v:IsA("Motor6D") then
+                if v.Part0 == clone then v.Part0 = oldRoot end
+                if v.Part1 == clone then v.Part1 = oldRoot end
+            end
+        end
+        
+        if clone then
+            local p = clone.CFrame
+            clone:Destroy()
+            clone = nil
+            oldRoot.CFrame = p
+        end
+        
+        tmp:Destroy()
+    end)
+    
+    if not success then
+        if oldRoot then pcall(function() oldRoot:Destroy() end) end
+        if clone then pcall(function() clone:Destroy() end) end
+    end
+    
+    oldRoot = nil
+    clone = nil
+    
+    if character and humanoid then
+        humanoid.HipHeight = hip or 0
+    end
+    
+    clearAllGhosts()
+end
+
+local function animationTrickery()
+    local character = LocalPlayer.Character
+    if not character then return end
+    
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return end
+    
+    local anim = Instance.new("Animation")
+    anim.AnimationId = "http://www.roblox.com/asset/?id=18537363391"
+    
+    local animator = humanoid:FindFirstChild("Animator") or Instance.new("Animator", humanoid)
+    local animTrack = animator:LoadAnimation(anim)
+    animTrack.Priority = Enum.AnimationPriority.Action4
+    animTrack:Play(0, 1, 0)
+    anim:Destroy()
+    table.insert(tracks, animTrack)
+    
+    animTrack.Stopped:Connect(function()
+        if animPlaying then 
+            task.wait(0.05)
+            animationTrickery() 
+        end
+    end)
+    
+    task.spawn(function()
+        animTrack.TimePosition = 0.7
+        task.wait(0.3)
+        if animTrack and animTrack.IsPlaying then
+            animTrack:AdjustSpeed(math.huge)
+        end
+    end)
+end
+
+local function turnOff()
+    clearAllGhosts()
+    if not animPlaying then return end
+    
+    animPlaying = false
+    _G.invisibleStealEnabled = false
+    
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    
+    for _, t in pairs(tracks) do
+        pcall(function() 
+            if t and t.IsPlaying then
+                t:Stop() 
+            end
+        end)
+    end
+    tracks = {}
+    
+    if connection then
+        pcall(function() connection:Disconnect() end)
+        connection = nil
+    end
+    
+    for _, c in ipairs(folderConnections) do
+        pcall(function() 
+            if c then 
+                c:Disconnect() 
+            end 
+        end)
+    end
+    folderConnections = {}
+    
+    revertClone()
+    
+    if humanoid and humanoid.Health > 0 then
+        task.wait(0.1)
+        pcall(function()
+            humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end)
+    end
+end
+
+local function turnOn()
+    if animPlaying then return end
+    
+    local character = LocalPlayer.Character
+    if not character then 
+        return 
+    end
+    
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then 
+        return 
+    end
+    
+    animPlaying = true
+    _G.invisibleStealEnabled = true
+    tracks = {}
+    
+    removeFolders()
+    
+    local success = doClone()
+    if not success then
+        animPlaying = false
+        _G.invisibleStealEnabled = false
+        return
+    end
+    
+    task.wait(0.05)
+    animationTrickery()
+    
+    task.defer(function()
+        if _G.resetBrainrotBeam then pcall(_G.resetBrainrotBeam) end
+        if _G.resetPlotBeam then pcall(_G.resetPlotBeam) end
+        task.wait(0.1)
+        if _G.updateBrainrotBeam then pcall(_G.updateBrainrotBeam) end
+        if _G.createPlotBeam then pcall(_G.createPlotBeam) end
+    end)
+    
+    local lastSetPosition = nil
+    local skipFrames = 5
+    
+    connection = RunService.PreSimulation:Connect(function()
         local char = LocalPlayer.Character
         if not char then return end
-        local hum = char:FindFirstChild("Humanoid")
-        if not hum then return end
         
-        if hum.Sit then
-            isWaitingForDelay = false
-            stealStartTime = 0
-            DisableSemiInvis(true)
-            lastWalkSpeed = hum.WalkSpeed
+        local hum = char:FindFirstChild("Humanoid")
+        if not hum or hum.Health <= 0 then return end
+        
+        if not oldRoot or not oldRoot.Parent then return end
+        
+        local root = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        
+        if skipFrames > 0 then
+            skipFrames = skipFrames - 1
+            lastSetPosition = nil
             return
         end
         
-        local currentWalkSpeed = hum.WalkSpeed
-        local isStealing = currentWalkSpeed <= 25
-        local wasStealing = lastWalkSpeed <= 25
-        
-        if isStealing and not wasStealing then
-            stealStartTime = tick()
-            isWaitingForDelay = true
-        end
-        
-        if isWaitingForDelay and isStealing then
-            if tick() - stealStartTime >= STEAL_DELAY then
-                isWaitingForDelay = false
-                if not hum.Sit then
-                    EnableSemiInvis()
+        if lastSetPosition then
+            local currentPos = oldRoot.Position
+            local jumpDist = (currentPos - lastSetPosition).Magnitude
+            
+            if jumpDist > 8 and not _G.RecoveryInProgress then
+                lastSetPosition = nil
+                createServerGhost(currentPos)
+                
+                if _G.AutoRecoverLagback and _G.toggleInvisibleSteal then
+                    _G.RecoveryInProgress = true
+                    task.spawn(function()
+                        pcall(_G.toggleInvisibleSteal)
+                        task.wait(0.5)
+                        pcall(_G.toggleInvisibleSteal)
+                        _G.RecoveryInProgress = false
+                    end)
                 end
             end
         end
         
-        if not isStealing and wasStealing then
-            isWaitingForDelay = false
-            stealStartTime = 0
-            DisableSemiInvis(true)
+        if clone then
+            clone.CanCollide = false
         end
         
-        if not isStealing and isWaitingForDelay then
-            isWaitingForDelay = false
-            stealStartTime = 0
+        for _, c in pairs(oldRoot:GetChildren()) do
+            if c:IsA("Attachment") or c:IsA("Beam") or c:IsA("ParticleEmitter") then
+                pcall(function() c:Destroy() end)
+            end
         end
         
-        lastWalkSpeed = currentWalkSpeed
+        local rotAngle = _G.InvisStealAngle or 233
+        local sa = (_G.SinkSliderValue or 5) * 0.5
+        local cf = root.CFrame - Vector3.new(0, sa, 0)
+        
+        oldRoot.CFrame = cf * CFrame.Angles(math.rad(rotAngle), 0, 0)
+        oldRoot.AssemblyLinearVelocity = root.AssemblyLinearVelocity
+        oldRoot.CanCollide = false
+        
+        lastSetPosition = oldRoot.Position
     end)
 end
 
-local function StopStealDetection()
-    if stealDetectionConnection then
-        stealDetectionConnection:Disconnect()
-        stealDetectionConnection = nil
+_G.toggleInvisibleSteal = function()
+    if animPlaying then 
+        turnOff() 
+    else 
+        turnOn() 
     end
-    isWaitingForDelay = false
-    stealStartTime = 0
-    lastWalkSpeed = 100
 end
+
+-- Character handling
+local function onCharacterAdded(newChar)
+    clearAllGhosts()
+    lagbackCallCount = 0
+    
+    pcall(function()
+        if Workspace.CurrentCamera then
+            for _, c in pairs(Workspace.CurrentCamera:GetChildren()) do
+                if c:IsA("BasePart") and c.Name == "HumanoidRootPart" then 
+                    c:Destroy() 
+                end
+            end
+        end
+    end)
+    
+    if oldRoot then pcall(function() oldRoot:Destroy() end); oldRoot = nil end
+    if clone then pcall(function() clone:Destroy() end); clone = nil end
+    animPlaying = false
+    _G.invisibleStealEnabled = false
+    
+    task.wait(0.2)
+    
+    local camera = Workspace.CurrentCamera
+    if camera and newChar then
+        local h = newChar:FindFirstChildOfClass("Humanoid")
+        if h then
+            camera.CameraSubject = h
+            camera.CameraType = Enum.CameraType.Custom
+        end
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(onCharacterAdded)
+
+local function setupDeathListener()
+    local ch = LocalPlayer.Character
+    if ch then
+        local h = ch:FindFirstChildOfClass("Humanoid")
+        if h then
+            h.Died:Connect(function()
+                clearAllGhosts()
+                lagbackCallCount = 0
+                if animPlaying then
+                    task.spawn(turnOff)
+                end
+            end)
+        end
+    end
+end
+
+setupDeathListener()
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.1)
+    setupDeathListener()
+end)
+
+-- Anti-Death System
+task.spawn(function()
+    local currentConnection = nil
+    _G.AntiDieConnection = nil
+    _G.AntiDieDisabled = false
+    
+    local function setupAntiDie()
+        if _G.AntiDieDisabled then return end
+        local character = LocalPlayer.Character
+        if not character then return end
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if not humanoid then return end
+        
+        if currentConnection then
+            pcall(function() currentConnection:Disconnect() end)
+        end
+        
+        currentConnection = humanoid:GetPropertyChangedSignal("Health"):Connect(function()
+            if _G.AntiDieDisabled then return end
+            if humanoid.Health <= 0 then
+                humanoid.Health = humanoid.MaxHealth
+            end
+        end)
+        _G.AntiDieConnection = currentConnection
+    end
+    
+    _G.setupAntiDie = setupAntiDie
+    setupAntiDie()
+    
+    LocalPlayer.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        if not _G.AntiDieDisabled then
+            setupAntiDie()
+        end
+    end)
+end)
+
+-- Auto Invis During Steal
+task.spawn(function()
+    local wasStealingForInvis = false
+    local autoEnabledInvis = false
+    task.wait(1)
+    
+    while task.wait(0.1) do
+        if _G.AutoInvisDuringSteal == false then
+            wasStealingForInvis = false
+            autoEnabledInvis = false
+        else
+            local isStealing = LocalPlayer:GetAttribute("Stealing")
+            if isStealing and not wasStealingForInvis then
+                if not _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
+                    task.delay(0.25, function()
+                        if LocalPlayer:GetAttribute("Stealing") and not _G.invisibleStealEnabled then
+                            pcall(_G.toggleInvisibleSteal)
+                            autoEnabledInvis = true
+                        end
+                    end)
+                end
+            end
+            
+            if not isStealing and autoEnabledInvis and _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
+                pcall(_G.toggleInvisibleSteal)
+                autoEnabledInvis = false
+            end
+            
+            wasStealingForInvis = isStealing
+        end
+    end
+end)
+
+-- Speed Boost System
+local SpeedConnection = nil
 
 local function EnableSpeedBoost()
     if SpeedConnection then return end
     SpeedConnection = RunService.Heartbeat:Connect(function()
-        if not MS.SpeedBoostEnabled then return end
         local char = LocalPlayer.Character
         if not char then return end
         local root = char:FindFirstChild("HumanoidRootPart")
@@ -432,7 +585,7 @@ local function EnableSpeedBoost()
         local moveDir = hum.MoveDirection
         if moveDir.Magnitude > 0.1 then
             local dir = moveDir.Unit
-            root.AssemblyLinearVelocity = Vector3.new(dir.X * MS.StealSpeed, root.AssemblyLinearVelocity.Y, dir.Z * MS.StealSpeed)
+            root.AssemblyLinearVelocity = Vector3.new(dir.X * _G.InvisStealSpeed, root.AssemblyLinearVelocity.Y, dir.Z * _G.InvisStealSpeed)
         end
     end)
 end
@@ -444,59 +597,26 @@ local function DisableSpeedBoost()
     end
 end
 
-local function EnableNoAnim()
-    if NoAnimLoop then return end
-    NoAnimLoop = RunService.Heartbeat:Connect(function()
-        local char = LocalPlayer.Character
-        if not char then return end
-        local hum = char:FindFirstChild("Humanoid")
-        if not hum then return end
-        local animator = hum:FindFirstChild("Animator")
-        if not animator then return end
+-- ============================================
+-- GUI CREATION
+-- ============================================
 
-        for _, track in pairs(animator:GetPlayingAnimationTracks()) do
-            if track.IsPlaying and track ~= stealFaixaAnimacao then
-                track:AdjustSpeed(0)
-            end
-        end
-    end)
-end
-
-local function DisableNoAnim()
-    if NoAnimLoop then
-        NoAnimLoop:Disconnect()
-        NoAnimLoop = nil
-    end
-    local char = LocalPlayer.Character
-    if char then
-        local hum = char:FindFirstChild("Humanoid")
-        if hum then
-            local animator = hum:FindFirstChild("Animator")
-            if animator then
-                for _, track in pairs(animator:GetPlayingAnimationTracks()) do track:AdjustSpeed(1) end
-            end
-        end
-    end
-end
-
-local parent = LocalPlayer:WaitForChild("PlayerGui")
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "MovementPanel"
+ScreenGui.Name = "InvisStealPanel"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.Parent = parent
+ScreenGui.Parent = PlayerGui
 
--- UIScale auf ScreenGui
 local GlobalUIScale = Instance.new("UIScale")
 GlobalUIScale.Name = "GlobalScale"
-GlobalUIScale.Scale = 0.3 + (1.0 - 0.3) * ((MS.GuiScale - 20) / (100 - 20))
+GlobalUIScale.Scale = 0.3 + (1.0 - 0.3) * ((_G.InvisGuiScale - 20) / (100 - 20))
 GlobalUIScale.Parent = ScreenGui
 
 local Main = Instance.new("Frame")
 Main.Name = "Main"
 Main.AnchorPoint = Vector2.new(0, 1)
-Main.Size = UDim2.new(0, 340, 0, 530)
-Main.Position = UDim2.new(0, 15, 1, -15)
+Main.Size = UDim2.new(0, 340, 0, 590)
+Main.Position = UDim2.new(0, 370, 1, -15)
 Main.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
 Main.BorderSizePixel = 0
 Main.Parent = ScreenGui
@@ -507,26 +627,24 @@ Stroke.Color = Color3.fromRGB(35, 35, 40)
 Stroke.Thickness = 1
 Stroke.Parent = Main
 
--- ============================================
--- OPEN BUTTON
--- ============================================
+-- Open Button
 local OpenButton = Instance.new("TextButton")
-OpenButton.Name             = "OpenButton"
-OpenButton.AnchorPoint      = Vector2.new(0, 1)
-OpenButton.Size             = UDim2.new(0, 170, 0, 32)
-OpenButton.Position         = UDim2.new(0, 15, 1, -15)
+OpenButton.Name = "OpenButton"
+OpenButton.AnchorPoint = Vector2.new(0, 1)
+OpenButton.Size = UDim2.new(0, 180, 0, 32)
+OpenButton.Position = UDim2.new(0, 195, 1, -15)
 OpenButton.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
-OpenButton.BorderSizePixel  = 0
-OpenButton.Text             = "Open Movement Panel"
-OpenButton.TextColor3       = Color3.fromRGB(170, 170, 180)
-OpenButton.Font             = Enum.Font.GothamBold
-OpenButton.TextSize         = 12
-OpenButton.AutoButtonColor  = false
-OpenButton.Visible          = false
-OpenButton.Parent           = ScreenGui
+OpenButton.BorderSizePixel = 0
+OpenButton.Text = "Open Invis Steal Panel"
+OpenButton.TextColor3 = Color3.fromRGB(170, 170, 180)
+OpenButton.Font = Enum.Font.GothamBold
+OpenButton.TextSize = 12
+OpenButton.AutoButtonColor = false
+OpenButton.Visible = false
+OpenButton.Parent = ScreenGui
 Instance.new("UICorner", OpenButton).CornerRadius = UDim.new(0, 8)
 local openStroke = Instance.new("UIStroke", OpenButton)
-openStroke.Color     = Color3.fromRGB(40, 40, 48)
+openStroke.Color = Color3.fromRGB(40, 40, 48)
 openStroke.Thickness = 1
 
 OpenButton.MouseEnter:Connect(function()
@@ -568,10 +686,7 @@ UserInputService.InputEnded:Connect(function(i)
     end
 end)
 
--- ============================================
--- PANEL HEADER
--- ============================================
-
+-- Header
 local DragBar = Instance.new("Frame")
 DragBar.Size = UDim2.new(1, 0, 0, 40)
 DragBar.Position = UDim2.new(0, 0, 0, 0)
@@ -582,7 +697,7 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -50, 0, 36)
 Title.Position = UDim2.new(0, 14, 0, 4)
 Title.BackgroundTransparency = 1
-Title.Text = "Movement"
+Title.Text = "Invisible Steal"
 Title.TextColor3 = Color3.fromRGB(210, 210, 215)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 18
@@ -591,16 +706,16 @@ Title.Parent = Main
 
 -- Close Button
 local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size               = UDim2.new(0, 26, 0, 26)
-CloseBtn.Position           = UDim2.new(1, -36, 0, 6)
-CloseBtn.BackgroundColor3   = Color3.fromRGB(25, 25, 30)
-CloseBtn.BorderSizePixel    = 0
-CloseBtn.Text               = "×"
-CloseBtn.TextColor3         = Color3.fromRGB(140, 140, 150)
-CloseBtn.Font               = Enum.Font.GothamBold
-CloseBtn.TextSize           = 18
-CloseBtn.AutoButtonColor    = false
-CloseBtn.Parent             = Main
+CloseBtn.Size = UDim2.new(0, 26, 0, 26)
+CloseBtn.Position = UDim2.new(1, -36, 0, 6)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+CloseBtn.BorderSizePixel = 0
+CloseBtn.Text = "×"
+CloseBtn.TextColor3 = Color3.fromRGB(140, 140, 150)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 18
+CloseBtn.AutoButtonColor = false
+CloseBtn.Parent = Main
 Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
 
 CloseBtn.MouseEnter:Connect(function()
@@ -917,7 +1032,6 @@ local function CreateSlider(labelText, yPos, minVal, maxVal, initialValue, onCha
         setFromAlpha(alpha, false)
     end
 
-    -- TextBox input: user can type value directly
     valueLabel.FocusLost:Connect(function(enterPressed)
         local txt = valueLabel.Text:gsub("%%", "")
         local num = tonumber(txt)
@@ -983,64 +1097,56 @@ end
 -- ============================================
 
 local yPos = 55
+local waitingForInvisKey = false
+local invisKeyBtn
 
-SemiInvisMainUpdate, semiInvisKeyBtn = CreateToggleWithKeybind("Semi Invis", yPos, function() return MS.SemiInvisEnabled end, MS.SemiInvisKey,
+local enabledUpdate, invisKeyBtn = CreateToggleWithKeybind("Enabled", yPos, 
+    function() return _G.invisibleStealEnabled end, 
+    _G.INVISIBLE_STEAL_KEY,
     function(state)
-        if state then
-            EnableSemiInvis()
-        else
-            DisableSemiInvis(true)
+        if _G.toggleInvisibleSteal then
+            pcall(_G.toggleInvisibleSteal)
         end
     end,
     function(btn)
-        waitingForSemiInvisKey = true
+        waitingForInvisKey = true
         btn.Text = "..."
     end
 )
 
-yPos = yPos + 40
-
-local semiInvisOnStealUpdate = CreateSmallToggle("Semi Invis on Steal", yPos, function() return MS.SemiInvisStealEnabled end, function(state)
-    MS.SemiInvisStealEnabled = state
-    if state then StartStealDetection() else StopStealDetection() end
+yPos = yPos + 47
+local rotationSlider = CreateSlider("Rotation", yPos, 0, 360, _G.InvisStealAngle, function(val)
+    _G.InvisStealAngle = val
     SaveSettings()
 end)
+
+yPos = yPos + 47
+local depthSlider = CreateSlider("Depth", yPos, 0, 18, _G.SinkSliderValue, function(val)
+    _G.SinkSliderValue = val
+    SaveSettings()
+end)
+
+yPos = yPos + 47
+local autoRecoverUpdate = CreateToggle("Auto Recover Lagback", yPos, 
+    function() return _G.AutoRecoverLagback end, 
+    function(state)
+        _G.AutoRecoverLagback = state
+        SaveSettings()
+    end
+)
+
+yPos = yPos + 47
+local autoInvisUpdate = CreateSmallToggle("Auto Invis on Steal", yPos, 
+    function() return _G.AutoInvisDuringSteal end, 
+    function(state)
+        _G.AutoInvisDuringSteal = state
+        SaveSettings()
+    end
+)
 
 yPos = yPos + 37
-local noAnimUpdate = CreateToggle("No Animation", yPos, function() return MS.NoAnimEnabled end, function(state)
-    MS.NoAnimEnabled = state
-    if state then EnableNoAnim() else DisableNoAnim() end
-    SaveSettings()
-end)
-
-yPos = yPos + 47
-local speedBoostUpdate, speedKeyBtn = CreateToggleWithKeybind("Speed Boost on Steal", yPos, function() return MS.SpeedBoostEnabled end, MS.SpeedBoostKey,
-    function(state)
-        MS.SpeedBoostEnabled = state
-        if state then EnableSpeedBoost() else DisableSpeedBoost() end
-        SaveSettings()
-    end,
-    function(btn)
-        waitingForSpeedKey = true
-        btn.Text = "..."
-    end
-)
-
-yPos = yPos + 47
-local speedSlider = CreateSlider("Speed Value", yPos, 16, 40, MS.StealSpeed, function(val)
-    MS.StealSpeed = val
-    SaveSettings()
-end)
-
-yPos = yPos + 47
-local angleSlider = CreateSlider("Body Angle", yPos, 180, 360, MS.BodyAngle or 233, function(val)
-    MS.BodyAngle = val
-    SaveSettings()
-end)
-
-yPos = yPos + 47
-local depthSlider = CreateSlider("Depth", yPos, 0.5, 10, MS.DepthOffset or 3.7, function(val)
-    MS.DepthOffset = val
+local speedSlider = CreateSlider("Speed Boost", yPos, 16, 40, _G.InvisStealSpeed, function(val)
+    _G.InvisStealSpeed = val
     SaveSettings()
 end)
 
@@ -1073,9 +1179,7 @@ StatusText.TextSize = 12
 StatusText.TextXAlignment = Enum.TextXAlignment.Left
 StatusText.Parent = StatusBar
 
--- ============================================
--- SETTINGS SECTION
--- ============================================
+-- Settings Section
 yPos = yPos + 38
 
 local SettingsDivider = Instance.new("Frame", Main)
@@ -1099,15 +1203,17 @@ SettingsLabel.Parent = Main
 
 yPos = yPos + 25
 
--- Auto Open on Load Toggle
-local autoOpenUpdate = CreateSmallToggle("Auto Open on Load", yPos, function() return MS.AutoOpenOnLoad end, function(state)
-    MS.AutoOpenOnLoad = state
-    SaveSettings()
-end)
+local autoOpenUpdate = CreateSmallToggle("Auto Open on Load", yPos, 
+    function() return _G.AutoOpenInvisPanel end, 
+    function(state)
+        _G.AutoOpenInvisPanel = state
+        SaveSettings()
+    end
+)
 
 yPos = yPos + 37
 
--- GUI Scale Slider (with text input)
+-- GUI Scale Slider
 local guiScaleH = Instance.new("Frame", Main)
 guiScaleH.Size = UDim2.new(0.9, 0, 0, 42)
 guiScaleH.Position = UDim2.new(0.05, 0, 0, yPos)
@@ -1154,7 +1260,7 @@ Instance.new("UICorner", guiScaleValueBG).CornerRadius = UDim.new(0, 4)
 local guiScaleInput = Instance.new("TextBox", guiScaleValueBG)
 guiScaleInput.Size = UDim2.new(1, 0, 1, 0)
 guiScaleInput.BackgroundTransparency = 1
-guiScaleInput.Text = tostring(MS.GuiScale) .. "%"
+guiScaleInput.Text = tostring(_G.InvisGuiScale) .. "%"
 guiScaleInput.Font = Enum.Font.GothamBold
 guiScaleInput.TextSize = 13
 guiScaleInput.TextColor3 = Color3.fromRGB(200, 200, 210)
@@ -1167,7 +1273,7 @@ local guiScaleDragging = false
 local function setGuiScaleFromAlpha(a, instant)
     a = math.clamp(a, 0, 1)
     local value = math.floor(20 + (100 - 20) * a + 0.5)
-    MS.GuiScale = value
+    _G.InvisGuiScale = value
     if not guiScaleInput:IsFocused() then
         guiScaleInput.Text = tostring(value) .. "%"
     end
@@ -1201,17 +1307,16 @@ local function updateGuiScaleFromX(px)
     setGuiScaleFromAlpha(alpha, false)
 end
 
--- TextBox input for GUI Scale
 guiScaleInput.FocusLost:Connect(function()
     local txt = guiScaleInput.Text:gsub("%%", "")
     local num = tonumber(txt)
     if num then
         num = math.clamp(math.floor(num + 0.5), 20, 100)
-        MS.GuiScale = num
+        _G.InvisGuiScale = num
         local alpha = (num - 20) / (100 - 20)
         setGuiScaleFromAlpha(alpha, false)
     else
-        guiScaleInput.Text = tostring(MS.GuiScale) .. "%"
+        guiScaleInput.Text = tostring(_G.InvisGuiScale) .. "%"
     end
 end)
 
@@ -1245,19 +1350,17 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
--- Finale Hoehe
+-- Final height
 yPos = yPos + 50
 Main.Size = UDim2.new(0, 340, 0, yPos)
 
--- Slider initial setzen
 task.defer(function()
-    local alpha = (MS.GuiScale - 20) / (100 - 20)
+    local alpha = (_G.InvisGuiScale - 20) / (100 - 20)
     setGuiScaleFromAlpha(alpha, true)
 end)
 
--- Auto Open beim Start
 task.defer(function()
-    if not MS.AutoOpenOnLoad then
+    if not _G.AutoOpenInvisPanel then
         Main.Visible = false
         OpenButton.Visible = true
     else
@@ -1273,62 +1376,36 @@ end)
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     
-    if waitingForSemiInvisKey and input.UserInputType == Enum.UserInputType.Keyboard then
-        waitingForSemiInvisKey = false
+    if waitingForInvisKey and input.UserInputType == Enum.UserInputType.Keyboard then
+        waitingForInvisKey = false
         local keyName = input.KeyCode.Name
         if keyName and keyName ~= "Unknown" then
-            MS.SemiInvisKey = keyName
-            if semiInvisKeyBtn then semiInvisKeyBtn.Text = keyName end
+            _G.INVISIBLE_STEAL_KEY = keyName
+            if invisKeyBtn then invisKeyBtn.Text = keyName end
             SaveSettings()
         else
-            if semiInvisKeyBtn then semiInvisKeyBtn.Text = MS.SemiInvisKey end
-        end
-        return
-    end
-
-    if waitingForSpeedKey and input.UserInputType == Enum.UserInputType.Keyboard then
-        waitingForSpeedKey = false
-        local keyName = input.KeyCode.Name
-        if keyName and keyName ~= "Unknown" then
-            MS.SpeedBoostKey = keyName
-            speedKeyBtn.Text = keyName
-            SaveSettings()
-        else
-            speedKeyBtn.Text = MS.SpeedBoostKey
+            if invisKeyBtn then invisKeyBtn.Text = _G.INVISIBLE_STEAL_KEY end
         end
         return
     end
     
     if input.UserInputType == Enum.UserInputType.Keyboard then
-        if input.KeyCode == Enum.KeyCode.RightControl then
+        if input.KeyCode == Enum.KeyCode.RightShift then
             Main.Visible = not Main.Visible
             updateOpenButtonVisibility()
             return
         end
         
-        local semiKeyCode = Enum.KeyCode[MS.SemiInvisKey]
-        if semiKeyCode and input.KeyCode == semiKeyCode then
-            local newState = not MS.SemiInvisEnabled
-            if newState then
-                EnableSemiInvis()
-            else
-                DisableSemiInvis(true)
-            end
-        end
-
-        local speedKeyCode = Enum.KeyCode[MS.SpeedBoostKey]
-        if speedKeyCode and input.KeyCode == speedKeyCode then
-            local newState = not MS.SpeedBoostEnabled
-            MS.SpeedBoostEnabled = newState
-            if newState then EnableSpeedBoost() else DisableSpeedBoost() end
-            speedBoostUpdate(newState, false)
-            SaveSettings()
+        local invisKeyCode = Enum.KeyCode[_G.INVISIBLE_STEAL_KEY]
+        if invisKeyCode and input.KeyCode == invisKeyCode then
+            pcall(_G.toggleInvisibleSteal)
+            enabledUpdate(_G.invisibleStealEnabled, false)
         end
     end
 end)
 
 -- ============================================
--- DRAGGING (blocked when slider is active)
+-- DRAGGING
 -- ============================================
 
 local dragging, dragStart, startPos
@@ -1352,56 +1429,12 @@ UserInputService.InputEnded:Connect(function(i)
     end
 end)
 
--- ============================================
--- CHARACTER HANDLING
--- ============================================
-
-LocalPlayer.CharacterAdded:Connect(function(char)
-    DisableSemiInvis(true)
-    lastWalkSpeed = 100
-    isWaitingForDelay = false
-    stealStartTime = 0
-    godmodeSetup = false
-    local hum = char:WaitForChild("Humanoid", 10)
-    if hum then
-        hum.Seated:Connect(function(isSeated)
-            if isSeated then
-                isWaitingForDelay = false
-                stealStartTime = 0
-                DisableSemiInvis(true)
-            end
-        end)
-    end
-end)
-
-if LocalPlayer.Character then
-    local hum = LocalPlayer.Character:FindFirstChild("Humanoid")
-    if hum then
-        hum.Seated:Connect(function(isSeated)
-            if isSeated then
-                isWaitingForDelay = false
-                stealStartTime = 0
-                DisableSemiInvis(true)
-            end
-        end)
-    end
-end
-
 -- Status Loop
 task.spawn(function()
     while ScreenGui and ScreenGui.Parent do
-        if stealInvisActive then
-            StatusText.Text = string.format("Semi Invis on Steal (%.1f° / depth %.1f)", MS.BodyAngle or 233, MS.DepthOffset or 3.7)
+        if _G.invisibleStealEnabled then
+            StatusText.Text = string.format("Invis Active (%.1f° / depth %.1f)", _G.InvisStealAngle, _G.SinkSliderValue)
             StatusDot.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
-        elseif MS.SpeedBoostEnabled then
-            StatusText.Text = "Speed Boost on Steal: " .. tostring(MS.StealSpeed)
-            StatusDot.BackgroundColor3 = Color3.fromRGB(200, 200, 100)
-        elseif isWaitingForDelay then
-            StatusText.Text = "Waiting..."
-            StatusDot.BackgroundColor3 = Color3.fromRGB(200, 150, 100)
-        elseif MS.NoAnimEnabled then
-            StatusText.Text = "No Animations"
-            StatusDot.BackgroundColor3 = Color3.fromRGB(200, 150, 100)
         else
             StatusText.Text = "Idle"
             StatusDot.BackgroundColor3 = Color3.fromRGB(100, 100, 110)
@@ -1409,19 +1442,3 @@ task.spawn(function()
         task.wait(1/30)
     end
 end)
-
--- Startup
-if MS.SemiInvisStealEnabled then StartStealDetection() end
-if MS.NoAnimEnabled then EnableNoAnim() end
-if MS.SpeedBoostEnabled then EnableSpeedBoost() end
-
-function MS.Disable()
-    StopStealDetection()
-    DisableSpeedBoost()
-    DisableNoAnim()
-    DisableSemiInvis(false)
-    for _, conn in pairs(MS.Connections) do
-        if conn then pcall(function() conn:Disconnect() end) end
-    end
-    if ScreenGui then ScreenGui:Destroy() end
-end
